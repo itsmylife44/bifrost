@@ -1,5 +1,9 @@
 # Bifrost
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg)](https://www.typescriptlang.org/)
+[![Bun](https://img.shields.io/badge/Bun-1.x-orange.svg)](https://bun.sh/)
+
 Persistent SSH connection plugin for [OpenCode](https://github.com/opencode-ai/opencode).
 
 Bifrost maintains a single SSH connection using ControlMaster multiplexing, so every command reuses the same connection instead of reconnecting each time.
