@@ -90,11 +90,20 @@ async function readStreamLimited(stream: ReadableStream<Uint8Array>, maxBytes: n
   return truncated ? text + `\n... [truncated at ${maxBytes} bytes]` : text;
 }
 
-export class BifrostManager {
+export class BifrostManager implements AsyncDisposable {
   private _state: ConnectionState = "disconnected";
   private _config: BifrostConfig | null = null;
   private _controlPath: string | null = null;
   private _mutex: Promise<void> = Promise.resolve();
+
+  /**
+   * Explicit Resource Management (ES2024)
+   * Enables: `await using manager = new BifrostManager()`
+   * Auto-disconnects when scope exits
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.disconnect();
+  }
 
   get state(): ConnectionState {
     return this._state;
