@@ -4,6 +4,8 @@ Persistent SSH connection plugin for [OpenCode](https://github.com/opencode-ai/o
 
 Bifrost maintains a single SSH connection using ControlMaster multiplexing, so every command reuses the same connection instead of reconnecting each time.
 
+![Bifrost Demo](assets/demo.gif)
+
 ## Installation
 
 ### 1. Register the plugin
