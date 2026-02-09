@@ -18,12 +18,13 @@ export type BifrostErrorCode =
   | "TIMEOUT";
 
 export class BifrostError extends Error {
+  public override readonly name = "BifrostError" as const;
+  
   constructor(
     message: string,
     public readonly code: BifrostErrorCode
   ) {
     super(message);
-    this.name = "BifrostError";
   }
 }
 
@@ -39,7 +40,7 @@ export interface ExecOptions {
 }
 
 const SOCKET_DIR = `${homedir()}/.ssh/bifrost-control`;
-const DEFAULT_TIMEOUT = 30000;
+const DEFAULT_TIMEOUT = 30_000;
 const DEFAULT_MAX_OUTPUT = 10 * 1024 * 1024;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
@@ -206,34 +207,7 @@ export class BifrostManager {
       try {
         this.cleanup();
         await this.ensureSocketDir();
-
-        const args = [
-          "ssh",
-          "-fN",
-          "-o", "ControlMaster=auto",
-          "-o", `ControlPath=${this._controlPath}`,
-          "-o", `ControlPersist=${this._config.controlPersist}`,
-          "-o", `ServerAliveInterval=${this._config.serverAliveInterval}`,
-          "-o", `ConnectTimeout=${this._config.connectTimeout}`,
-          "-o", "StrictHostKeyChecking=accept-new",
-          "-i", this._config.keyPath,
-          "-p", String(this._config.port),
-          this.getDestination(),
-        ];
-
-        const proc = Bun.spawn(args, {
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-
-        const timeoutMs = (this._config.connectTimeout + 5) * 1000;
-        const exitCode = await withTimeout(proc.exited, timeoutMs, "SSH connect");
-        const stderr = await new Response(proc.stderr).text();
-
-        if (exitCode !== 0) {
-          throw this.translateSSHError(exitCode, stderr);
-        }
-
+        await this.doConnect();
         this._state = "connected";
       } catch (error) {
         this._state = "disconnected";
