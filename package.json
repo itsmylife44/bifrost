@@ -1,0 +1,39 @@
+{
+  "name": "bifrost",
+  "version": "0.0.1",
+  "description": "OpenCode plugin for persistent SSH connections via ControlMaster multiplexing",
+  "author": "itsmylife44",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/itsmylife44/bifrost.git"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --format esm --target node && tsc --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.1.53",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5.9.3"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "ssh",
+    "controlmaster"
+  ]
+}
