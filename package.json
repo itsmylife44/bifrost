@@ -1,5 +1,5 @@
 {
-  "name": "bifrost",
+  "name": "opencode-bifrost",
   "version": "0.0.1",
   "description": "OpenCode plugin for persistent SSH connections via ControlMaster multiplexing",
   "author": "itsmylife44",
@@ -7,6 +7,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/itsmylife44/bifrost.git"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "type": "module",
   "main": "dist/index.js",
@@ -32,8 +35,13 @@
   },
   "keywords": [
     "opencode",
+    "opencode-plugin",
     "plugin",
     "ssh",
-    "controlmaster"
-  ]
+    "controlmaster",
+    "ocx"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }

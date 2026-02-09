@@ -19,7 +19,7 @@ Add to your `~/.config/opencode/opencode.json`:
 ```json
 {
   "plugins": [
-    "github:itsmylife44/bifrost"
+    "opencode-bifrost@latest"
   ]
 }
 ```
