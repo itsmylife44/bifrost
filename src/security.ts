@@ -1,3 +1,5 @@
+import { isWindows } from "./paths";
+
 export interface ValidationResult {
   valid: boolean;
   error?: string;
@@ -15,6 +17,7 @@ function normalizeUnicode(input: string): string {
 }
 
 const SAFE_PATH_CHARS = /^[a-zA-Z0-9_.\-\/\s@:]+$/;
+const SAFE_PATH_CHARS_WIN = /^[a-zA-Z0-9_.\-\/\\\s@:]+$/;
 
 const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; name: string }> = [
   { pattern: /\.\./, name: "path traversal (..)" },
@@ -32,7 +35,7 @@ const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; name: string }> = [
   { pattern: /\$\(/, name: "command substitution $()" },
 ];
 
-export function validatePath(path: string, fieldName: string): ValidationResult {
+export function validatePath(path: string, fieldName: string, options?: { local?: boolean }): ValidationResult {
   if (!path || path.trim().length === 0) {
     return { valid: false, error: `${fieldName} cannot be empty` };
   }
@@ -46,14 +49,21 @@ export function validatePath(path: string, fieldName: string): ValidationResult 
     };
   }
 
-  if (!SAFE_PATH_CHARS.test(path)) {
+  const allowBackslash = options?.local === true && isWindows();
+  const charPattern = allowBackslash ? SAFE_PATH_CHARS_WIN : SAFE_PATH_CHARS;
+
+  if (!charPattern.test(path)) {
     return { 
       valid: false, 
       error: `${fieldName} contains characters outside allowed set [a-zA-Z0-9_.\\-/@: ]` 
     };
   }
 
-  for (const { pattern, name } of DANGEROUS_PATTERNS) {
+  const patternsToCheck = allowBackslash
+    ? DANGEROUS_PATTERNS.filter((p) => p.name !== "backslash escape")
+    : DANGEROUS_PATTERNS;
+
+  for (const { pattern, name } of patternsToCheck) {
     if (pattern.test(path)) {
       return {
         valid: false,

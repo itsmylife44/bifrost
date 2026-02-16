@@ -1,7 +1,7 @@
-import { homedir } from "os";
-import { readdirSync, unlinkSync } from "fs";
+import { mkdirSync, readdirSync, unlinkSync, chmodSync } from "fs";
 import type { BifrostConfig } from "./config";
 import { parseConfig } from "./config";
+import { getSocketDir, isWindows } from "./paths";
 
 export type ConnectionState = 
   | "disconnected"
@@ -39,7 +39,7 @@ export interface ExecOptions {
   maxOutputBytes?: number;
 }
 
-const SOCKET_DIR = `${homedir()}/.ssh/bifrost-control`;
+const SOCKET_DIR = getSocketDir();
 const DEFAULT_TIMEOUT = 30_000;
 const DEFAULT_MAX_OUTPUT = 10 * 1024 * 1024;
 
@@ -140,18 +140,15 @@ export class BifrostManager implements AsyncDisposable {
   }
 
   private async ensureSocketDir(): Promise<void> {
-    const result = Bun.spawnSync(["mkdir", "-p", SOCKET_DIR]);
-    if (result.exitCode !== 0) {
+    try {
+      mkdirSync(SOCKET_DIR, { recursive: true, mode: 0o700 });
+
+      if (!isWindows()) {
+        chmodSync(SOCKET_DIR, 0o700);
+      }
+    } catch (err) {
       throw new BifrostError(
-        `Failed to create socket directory: ${result.stderr.toString()}`,
-        "COMMAND_FAILED"
-      );
-    }
-    
-    const chmodResult = Bun.spawnSync(["chmod", "700", SOCKET_DIR]);
-    if (chmodResult.exitCode !== 0) {
-      throw new BifrostError(
-        `Failed to set socket directory permissions: ${chmodResult.stderr.toString()}`,
+        `Failed to create socket directory: ${err instanceof Error ? err.message : String(err)}`,
         "COMMAND_FAILED"
       );
     }

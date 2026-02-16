@@ -1,6 +1,6 @@
 {
   "name": "opencode-bifrost",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "OpenCode plugin for persistent SSH connections via ControlMaster multiplexing",
   "author": "itsmylife44",
   "license": "MIT",

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { readFileSync, existsSync, statSync } from "fs";
 import { homedir } from "os";
+import { join } from "path";
+import { isWindows } from "./paths";
 
 const SAFE_HOST_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9.\-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
 const SAFE_USER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_\-]*$/;
@@ -52,11 +54,12 @@ export const BifrostConfigSchema = z.object({
 
 export type BifrostConfig = z.infer<typeof BifrostConfigSchema>;
 
-function expandTildePath(path: string): string {
-  if (path.startsWith("~")) {
-    return path.replace("~", homedir());
+function expandTildePath(filePath: string): string {
+  if (filePath.startsWith("~/") || filePath.startsWith("~\\") || filePath === "~") {
+    const rest = filePath.slice(1).replace(/^[/\\]/, "");
+    return rest ? join(homedir(), rest) : homedir();
   }
-  return path;
+  return filePath;
 }
 
 function validateKeyFile(keyPath: string): void {
@@ -68,25 +71,25 @@ function validateKeyFile(keyPath: string): void {
 
   try {
     const stats = statSync(expandedPath);
-    const mode = stats.mode;
 
-    // Check if world-readable (0o004)
-    if (mode & 0o004) {
-      throw new Error(
-        `Key file ${expandedPath} is world-readable. Fix with: chmod 600 ${expandedPath}`
-      );
-    }
-
-    // Check if group-readable (0o040)
-    if (mode & 0o040) {
-      throw new Error(
-        `Key file ${expandedPath} is group-readable. Fix with: chmod 600 ${expandedPath}`
-      );
-    }
-
-    // Must be a regular file
     if (!stats.isFile()) {
       throw new Error(`Key path ${expandedPath} is not a regular file`);
+    }
+
+    if (!isWindows()) {
+      const mode = stats.mode;
+
+      if (mode & 0o004) {
+        throw new Error(
+          `Key file ${expandedPath} is world-readable. Fix with: chmod 600 ${expandedPath}`
+        );
+      }
+
+      if (mode & 0o040) {
+        throw new Error(
+          `Key file ${expandedPath} is group-readable. Fix with: chmod 600 ${expandedPath}`
+        );
+      }
     }
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("Key")) {

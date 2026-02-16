@@ -1,7 +1,7 @@
-import { homedir } from "os";
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool";
 import { bifrostManager } from "../manager";
 import { existsSync } from "fs";
+import { getDefaultConfigPath } from "../paths";
 
 export const bifrost_status: ToolDefinition = tool({
   description:
@@ -9,7 +9,7 @@ export const bifrost_status: ToolDefinition = tool({
   args: {},
   execute: async () => {
     try {
-      const configPath = `${homedir()}/.config/opencode/bifrost.json`;
+      const configPath = getDefaultConfigPath();
 
       if (!existsSync(configPath)) {
         return `🌈 Bifrost Status\nState: Disconnected\nError: No configuration found at ${configPath}`;

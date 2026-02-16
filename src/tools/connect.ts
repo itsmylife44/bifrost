@@ -1,6 +1,6 @@
-import { homedir } from "os";
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool";
 import { bifrostManager } from "../manager";
+import { getDefaultConfigPath } from "../paths";
 
 export const bifrost_connect: ToolDefinition = tool({
   description:
@@ -9,11 +9,11 @@ export const bifrost_connect: ToolDefinition = tool({
     configPath: tool.schema
       .string()
       .optional()
-      .describe("Path to bifrost config file (defaults to ~/.config/opencode/bifrost.json)"),
+      .describe("Path to bifrost config file (auto-detected per platform if not provided)"),
   },
   execute: async (args) => {
     try {
-      const configPath = args.configPath || `${homedir()}/.config/opencode/bifrost.json`;
+      const configPath = args.configPath || getDefaultConfigPath();
       bifrostManager.loadConfig(configPath);
 
       if (bifrostManager.state === "connected") {

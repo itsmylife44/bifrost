@@ -16,7 +16,7 @@ export const bifrost_upload: ToolDefinition = tool({
   },
   execute: async (args) => {
     try {
-      const localValidation = validatePath(args.localPath, "localPath");
+      const localValidation = validatePath(args.localPath, "localPath", { local: true });
       if (!localValidation.valid) {
         return `Error: ${localValidation.error}`;
       }
