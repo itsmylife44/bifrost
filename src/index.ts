@@ -48,7 +48,7 @@ Automatically use these tools when the user:
 - Wants to transfer files to/from the server
 
 ### Workflow
-1. Call \`bifrost_connect\` to establish the connection (only needed once, it persists)
+1. Call \`bifrost_connect\` **without arguments** to establish the connection (config path is auto-detected — do NOT pass configPath manually)
 2. Use \`bifrost_exec\` to run commands (e.g., \`bifrost_exec({command: "docker ps"})\`)
 3. Use \`bifrost_upload\`/\`bifrost_download\` for file transfers
 4. The connection auto-disconnects when the session ends

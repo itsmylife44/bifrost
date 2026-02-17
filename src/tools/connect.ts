@@ -9,7 +9,7 @@ export const bifrost_connect: ToolDefinition = tool({
     configPath: tool.schema
       .string()
       .optional()
-      .describe("Path to bifrost config file (auto-detected per platform if not provided)"),
+      .describe("Path to bifrost config file. DO NOT set this — it is auto-detected from ~/.config/opencode/bifrost.json. Only override if the user explicitly provides a custom path."),
   },
   execute: async (args) => {
     try {
