@@ -3,7 +3,7 @@ import { bifrostManager } from "../manager";
 
 export const bifrost_disconnect: ToolDefinition = tool({
   description:
-    "Disconnect the Bifrost SSH connection and clean up the control socket.",
+    "Disconnect the Bifrost SSH connection and clean up resources.",
   args: {},
   execute: async () => {
     try {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { BifrostManager, BifrostError } from "../src/manager";
-import { mkdtempSync, writeFileSync, rmSync, chmodSync, statSync } from "fs";
-import { tmpdir, homedir } from "os";
+import { mkdtempSync, writeFileSync, rmSync, chmodSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
 describe("BifrostManager", () => {
@@ -32,10 +32,6 @@ describe("BifrostManager", () => {
     it("has null config initially", () => {
       expect(manager.config).toBeNull();
     });
-
-    it("has null controlPath initially", () => {
-      expect(manager.controlPath).toBeNull();
-    });
   });
 
   describe("loadConfig", () => {
@@ -54,59 +50,10 @@ describe("BifrostManager", () => {
       expect(manager.config!.user).toBe("admin");
     });
 
-    it("sets controlPath after loading config", () => {
-      const config = {
-        host: "192.168.1.100",
-        keyPath: keyPath,
-      };
-      writeFileSync(configPath, JSON.stringify(config));
-
-      manager.loadConfig(configPath);
-
-      expect(manager.controlPath).not.toBeNull();
-      expect(manager.controlPath).toContain("%C");
-    });
-
     it("throws on missing config file", () => {
       expect(() => manager.loadConfig("/nonexistent/config.json")).toThrow(
         /Config file not found/
       );
-    });
-  });
-
-  describe("socket path generation", () => {
-    it("uses %C hash pattern for socket path", () => {
-      const config = {
-        host: "192.168.1.100",
-        keyPath: keyPath,
-      };
-      writeFileSync(configPath, JSON.stringify(config));
-
-      manager.loadConfig(configPath);
-
-      expect(manager.controlPath).toContain("%C");
-    });
-
-    it("socket path is in socketDir", () => {
-      const config = {
-        host: "192.168.1.100",
-        keyPath: keyPath,
-      };
-      writeFileSync(configPath, JSON.stringify(config));
-
-      manager.loadConfig(configPath);
-
-      expect(manager.controlPath).toContain(manager.socketDir);
-    });
-  });
-
-  describe("socketDir permissions", () => {
-    it("socketDir path ends with bifrost-control", () => {
-      expect(manager.socketDir).toContain("bifrost-control");
-    });
-
-    it("socketDir is under .ssh directory", () => {
-      expect(manager.socketDir).toContain(".ssh");
     });
   });
 
@@ -172,6 +119,12 @@ describe("BifrostManager", () => {
     it("is a no-op", async () => {
       await manager.disconnect();
       expect(manager.state).toBe("disconnected");
+    });
+  });
+
+  describe("cleanup", () => {
+    it("is a no-op and does not throw", () => {
+      expect(() => manager.cleanup()).not.toThrow();
     });
   });
 });

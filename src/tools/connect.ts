@@ -4,7 +4,7 @@ import { getDefaultConfigPath } from "../paths";
 
 export const bifrost_connect: ToolDefinition = tool({
   description:
-    "Establish a persistent SSH connection to the configured remote server. Uses SSH ControlMaster multiplexing. Once connected, use bifrost_exec to run commands.",
+    "Establish a persistent SSH connection to the configured remote server. Uses SSH ControlMaster multiplexing. Once connected, use bifrost_exec to run commands. Works cross-platform (macOS, Linux, Windows).",
   args: {
     configPath: tool.schema
       .string()

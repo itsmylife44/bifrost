@@ -21,18 +21,15 @@ export const bifrost_status: ToolDefinition = tool({
 
       const connected = await bifrostManager.isConnected();
       const config = bifrostManager.config;
-      const socketDir = bifrostManager.socketDir;
 
       if (!config) {
         return `🌈 Bifrost Status\nState: Disconnected\nError: Failed to load configuration`;
       }
 
-      const socketPath = `${socketDir}/%C`;
       const state = connected ? "Connected" : "Disconnected";
       const server = `${config.user}@${config.host}:${config.port}`;
-      const socketStatus = connected ? "exists" : "missing";
 
-      let output = `🌈 Bifrost Status\nState: ${state}\nServer: ${server}\nSocket: ${socketPath} (${socketStatus})`;
+      let output = `🌈 Bifrost Status\nState: ${state}\nServer: ${server}`;
 
       if (connected) {
         output += "\nHealth: Connection alive";

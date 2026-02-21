@@ -29,7 +29,7 @@ const Bifrost: Plugin = async (ctx) => {
     "experimental.chat.system.transform": async (input, output) => {
       output.system.push(`## Bifrost SSH Plugin — Remote Server Access
 
-You have access to a remote server via persistent SSH connection. The server is pre-configured in ~/.config/opencode/bifrost.json.
+You have access to a remote server via persistent SSH connection. The server is pre-configured in ~/.config/opencode/bifrost.json. Works cross-platform (macOS, Linux, Windows).
 
 ### Available Tools
 - \`bifrost_connect\` — Establish persistent SSH connection (call once per session)

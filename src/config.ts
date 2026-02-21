@@ -40,10 +40,6 @@ export const BifrostConfigSchema = z.object({
     .positive()
     .default(10)
     .describe("Connection timeout in seconds"),
-  controlPersist: z
-    .string()
-    .default("15m")
-    .describe("ControlPersist value for SSH multiplexing"),
   serverAliveInterval: z
     .number()
     .int()

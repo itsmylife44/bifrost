@@ -13,7 +13,6 @@ describe("BifrostConfigSchema", () => {
         keyPath: "/path/to/key",
         port: 2222,
         connectTimeout: 30,
-        controlPersist: "30m",
         serverAliveInterval: 60,
       };
 
@@ -24,7 +23,6 @@ describe("BifrostConfigSchema", () => {
       expect(result.keyPath).toBe("/path/to/key");
       expect(result.port).toBe(2222);
       expect(result.connectTimeout).toBe(30);
-      expect(result.controlPersist).toBe("30m");
       expect(result.serverAliveInterval).toBe(60);
     });
 
@@ -41,7 +39,6 @@ describe("BifrostConfigSchema", () => {
       expect(result.user).toBe("root");
       expect(result.port).toBe(22);
       expect(result.connectTimeout).toBe(10);
-      expect(result.controlPersist).toBe("15m");
       expect(result.serverAliveInterval).toBe(30);
     });
   });
@@ -118,7 +115,6 @@ describe("parseConfig", () => {
       keyPath: keyPath,
       port: 2222,
       connectTimeout: 30,
-      controlPersist: "30m",
       serverAliveInterval: 60,
     };
     writeFileSync(configPath, JSON.stringify(config));
@@ -130,7 +126,6 @@ describe("parseConfig", () => {
     expect(result.keyPath).toBe(keyPath);
     expect(result.port).toBe(2222);
     expect(result.connectTimeout).toBe(30);
-    expect(result.controlPersist).toBe("30m");
     expect(result.serverAliveInterval).toBe(60);
   });
 
@@ -149,7 +144,6 @@ describe("parseConfig", () => {
     expect(result.user).toBe("root");
     expect(result.port).toBe(22);
     expect(result.connectTimeout).toBe(10);
-    expect(result.controlPersist).toBe("15m");
     expect(result.serverAliveInterval).toBe(30);
   });
 

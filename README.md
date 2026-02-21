@@ -6,7 +6,7 @@
 
 Persistent SSH connection plugin for [OpenCode](https://github.com/opencode-ai/opencode).
 
-Bifrost maintains a single SSH connection using ControlMaster multiplexing, so every command reuses the same connection instead of reconnecting each time.
+Bifrost maintains a single persistent SSH connection using the [ssh2](https://github.com/mscdex/ssh2) library (pure JavaScript), so every command reuses the same connection instead of reconnecting each time. Works cross-platform on macOS, Linux, and Windows.
 
 ![Bifrost Demo](assets/demo.gif)
 
@@ -78,15 +78,15 @@ Once configured, the agent automatically uses Bifrost when you mention:
 
 ## How It Works
 
-Bifrost uses SSH ControlMaster to maintain a persistent connection:
+Bifrost uses [ssh2](https://github.com/mscdex/ssh2) to maintain a persistent SSH connection in-process:
 
 ```
-First command:  [Connect] -----> [Execute] -----> [Keep socket open]
-Next commands:  [Reuse socket] -> [Execute] -----> [Still open]
+First command:  [Connect] -----> [Execute] -----> [Keep connection open]
+Next commands:  [Reuse conn] --> [Execute] -----> [Still open]
 Session ends:   [Auto-disconnect]
 ```
 
-The control socket is stored at `~/.ssh/bifrost-control/`.
+The connection lives in memory — no socket files, no OS-level SSH client required.
 
 ## Security
 

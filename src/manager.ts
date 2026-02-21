@@ -1,7 +1,7 @@
-import { mkdirSync, readdirSync, unlinkSync, chmodSync } from "fs";
+import { readFileSync } from "fs";
+import { Client, type SFTPWrapper } from "ssh2";
 import type { BifrostConfig } from "./config";
 import { parseConfig } from "./config";
-import { getSocketDir, isWindows } from "./paths";
 
 export type ConnectionState = 
   | "disconnected"
@@ -39,61 +39,13 @@ export interface ExecOptions {
   maxOutputBytes?: number;
 }
 
-const SOCKET_DIR = getSocketDir();
 const DEFAULT_TIMEOUT = 30_000;
 const DEFAULT_MAX_OUTPUT = 10 * 1024 * 1024;
-
-function withTimeout<T>(promise: Promise<T>, ms: number, operation: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => 
-      setTimeout(() => reject(new BifrostError(`${operation} timed out after ${ms}ms`, "TIMEOUT")), ms)
-    )
-  ]);
-}
-
-async function readStreamLimited(stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<string> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  let truncated = false;
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      if (totalBytes + value.length > maxBytes) {
-        const remaining = maxBytes - totalBytes;
-        if (remaining > 0) {
-          chunks.push(value.slice(0, remaining));
-        }
-        truncated = true;
-        break;
-      }
-      
-      chunks.push(value);
-      totalBytes += value.length;
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const combined = new Uint8Array(Math.min(totalBytes, maxBytes));
-  let offset = 0;
-  for (const chunk of chunks) {
-    combined.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  const text = new TextDecoder().decode(combined);
-  return truncated ? text + `\n... [truncated at ${maxBytes} bytes]` : text;
-}
 
 export class BifrostManager implements AsyncDisposable {
   private _state: ConnectionState = "disconnected";
   private _config: BifrostConfig | null = null;
-  private _controlPath: string | null = null;
+  private _client: Client | null = null;
   private _mutex: Promise<void> = Promise.resolve();
 
   /**
@@ -113,14 +65,6 @@ export class BifrostManager implements AsyncDisposable {
     return this._config;
   }
 
-  get controlPath(): string | null {
-    return this._controlPath;
-  }
-
-  get socketDir(): string {
-    return SOCKET_DIR;
-  }
-
   private async withMutex<T>(fn: () => Promise<T>): Promise<T> {
     const prev = this._mutex;
     let resolve: () => void;
@@ -136,62 +80,39 @@ export class BifrostManager implements AsyncDisposable {
 
   loadConfig(configPath: string): void {
     this._config = parseConfig(configPath);
-    this._controlPath = `${SOCKET_DIR}/%C`;
   }
 
-  private async ensureSocketDir(): Promise<void> {
-    try {
-      mkdirSync(SOCKET_DIR, { recursive: true, mode: 0o700 });
-
-      if (!isWindows()) {
-        chmodSync(SOCKET_DIR, 0o700);
-      }
-    } catch (err) {
-      throw new BifrostError(
-        `Failed to create socket directory: ${err instanceof Error ? err.message : String(err)}`,
-        "COMMAND_FAILED"
+  private translateSSHError(err: Error): BifrostError {
+    const msg = err.message.toLowerCase();
+    
+    if (msg.includes("authentication") || 
+        msg.includes("permission denied") ||
+        msg.includes("publickey") ||
+        msg.includes("all configured authentication methods failed")) {
+      return new BifrostError(
+        `Authentication failed. Check key at ${this._config?.keyPath}`,
+        "AUTH_FAILED"
       );
     }
-  }
-
-  private translateSSHError(exitCode: number, stderr: string): BifrostError {
-    const stderrLower = stderr.toLowerCase();
-    
-    if (exitCode === 255) {
-      if (stderrLower.includes("permission denied") || 
-          stderrLower.includes("authentication failed") ||
-          stderrLower.includes("publickey")) {
-        return new BifrostError(
-          `Authentication failed. Check key at ${this._config?.keyPath}`,
-          "AUTH_FAILED"
-        );
-      }
-      if (stderrLower.includes("connection refused") ||
-          stderrLower.includes("no route to host") ||
-          stderrLower.includes("connection timed out") ||
-          stderrLower.includes("could not resolve")) {
-        return new BifrostError(
-          `Server unreachable at ${this._config?.host}:${this._config?.port}`,
-          "UNREACHABLE"
-        );
-      }
+    if (msg.includes("connection refused") ||
+        msg.includes("no route to host") ||
+        msg.includes("timed out") ||
+        msg.includes("could not resolve") ||
+        msg.includes("getaddrinfo") ||
+        msg.includes("econnrefused") ||
+        msg.includes("etimedout") ||
+        msg.includes("ehostunreach") ||
+        msg.includes("enotfound")) {
       return new BifrostError(
-        `SSH connection error: ${stderr}`,
+        `Server unreachable at ${this._config?.host}:${this._config?.port}`,
         "UNREACHABLE"
       );
     }
     
     return new BifrostError(
-      `Command failed with exit code ${exitCode}: ${stderr}`,
+      `SSH error: ${err.message}`,
       "COMMAND_FAILED"
     );
-  }
-
-  private getDestination(): string {
-    if (!this._config) {
-      throw new BifrostError("No config loaded", "INVALID_STATE");
-    }
-    return `${this._config.user}@${this._config.host}`;
   }
 
   async connect(): Promise<void> {
@@ -211,8 +132,6 @@ export class BifrostManager implements AsyncDisposable {
       this._state = "connecting";
 
       try {
-        this.cleanup();
-        await this.ensureSocketDir();
         await this.doConnect();
         this._state = "connected";
       } catch (error) {
@@ -232,28 +151,13 @@ export class BifrostManager implements AsyncDisposable {
         throw new BifrostError(`Cannot disconnect in state: ${this._state}`, "INVALID_STATE");
       }
 
-      if (!this._config || !this._controlPath) {
-        this._state = "disconnected";
-        return;
-      }
-
       this._state = "disconnecting";
 
       try {
-        const args = [
-          "ssh",
-          "-O", "exit",
-          "-o", `ControlPath=${this._controlPath}`,
-          this.getDestination(),
-        ];
-
-        const proc = Bun.spawn(args, {
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-
-        await withTimeout(proc.exited, 5000, "SSH disconnect");
-      } catch {
+        if (this._client) {
+          this._client.end();
+          this._client = null;
+        }
       } finally {
         this._state = "disconnected";
       }
@@ -261,34 +165,22 @@ export class BifrostManager implements AsyncDisposable {
   }
 
   /**
-   * Health check via ssh -O check
-   * Returns true if connection is alive
+   * Health check — verifies if the underlying ssh2 client is still connected
    */
   async isConnected(): Promise<boolean> {
-    if (this._state !== "connected" || !this._config || !this._controlPath) {
+    if (this._state !== "connected" || !this._client) {
       return false;
     }
 
-    const args = [
-      "ssh",
-      "-O", "check",
-      "-o", `ControlPath=${this._controlPath}`,
-      this.getDestination(),
-    ];
-
-    const proc = Bun.spawn(args, {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const exitCode = await proc.exited;
-    return exitCode === 0;
+    try {
+      await this.execRaw("echo 1", { timeout: 5000 });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
-    const timeout = options.timeout ?? DEFAULT_TIMEOUT;
-    const maxOutput = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
-
     if (this._state !== "connected") {
       throw new BifrostError(
         `Cannot exec in state: ${this._state}. Call connect() first`,
@@ -296,91 +188,151 @@ export class BifrostManager implements AsyncDisposable {
       );
     }
 
-    if (!this._config || !this._controlPath) {
-      throw new BifrostError("No config or control path", "INVALID_STATE");
+    if (!this._client) {
+      throw new BifrostError("No SSH client", "INVALID_STATE");
     }
 
-    const alive = await this.isConnected();
-    if (!alive) {
-      this._state = "disconnected";
-      throw new BifrostError(
-        "Connection dead. Socket exists but connection failed",
-        "SOCKET_DEAD"
-      );
-    }
-
-    const escapedCommand = command.replace(/'/g, "'\\''");
-
-    const args = [
-      "ssh",
-      "-o", `ControlPath=${this._controlPath}`,
-      this.getDestination(),
-      `bash -l -c '${escapedCommand}'`,
-    ];
-
-    const proc = Bun.spawn(args, {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    try {
-      const exitCode = await withTimeout(proc.exited, timeout, "Command execution");
-      const [stdout, stderr] = await Promise.all([
-        readStreamLimited(proc.stdout, maxOutput),
-        readStreamLimited(proc.stderr, maxOutput),
-      ]);
-
-      return { stdout, stderr, exitCode };
-    } catch (error) {
-      proc.kill();
-      throw error;
-    }
+    return this.execRaw(command, options);
   }
 
-  private async runSftp(sftpCommand: string, timeout: number = 60000): Promise<void> {
-    if (this._state !== "connected") {
+  private async execRaw(command: string, options: ExecOptions = {}): Promise<ExecResult> {
+    const timeout = options.timeout ?? DEFAULT_TIMEOUT;
+    const maxOutput = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
+
+    if (!this._client) {
+      throw new BifrostError("No SSH client", "INVALID_STATE");
+    }
+
+    const client = this._client;
+
+    return new Promise<ExecResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new BifrostError(`Command execution timed out after ${timeout}ms`, "TIMEOUT"));
+      }, timeout);
+
+      client.exec(command, (err, stream) => {
+        if (err) {
+          clearTimeout(timer);
+          reject(this.translateSSHError(err));
+          return;
+        }
+
+        const stdoutChunks: Buffer[] = [];
+        const stderrChunks: Buffer[] = [];
+        let stdoutBytes = 0;
+        let stderrBytes = 0;
+        let stdoutTruncated = false;
+        let stderrTruncated = false;
+
+        stream.on("data", (data: Buffer) => {
+          if (stdoutBytes < maxOutput) {
+            const remaining = maxOutput - stdoutBytes;
+            if (data.length > remaining) {
+              stdoutChunks.push(data.subarray(0, remaining));
+              stdoutTruncated = true;
+            } else {
+              stdoutChunks.push(data);
+            }
+            stdoutBytes += data.length;
+          }
+        });
+
+        stream.stderr.on("data", (data: Buffer) => {
+          if (stderrBytes < maxOutput) {
+            const remaining = maxOutput - stderrBytes;
+            if (data.length > remaining) {
+              stderrChunks.push(data.subarray(0, remaining));
+              stderrTruncated = true;
+            } else {
+              stderrChunks.push(data);
+            }
+            stderrBytes += data.length;
+          }
+        });
+
+        stream.on("close", (code: number | null) => {
+          clearTimeout(timer);
+
+          let stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+          let stderr = Buffer.concat(stderrChunks).toString("utf-8");
+
+          if (stdoutTruncated) {
+            stdout += `\n... [truncated at ${maxOutput} bytes]`;
+          }
+          if (stderrTruncated) {
+            stderr += `\n... [truncated at ${maxOutput} bytes]`;
+          }
+
+          resolve({
+            stdout,
+            stderr,
+            exitCode: code ?? -1,
+          });
+        });
+
+        stream.on("error", (streamErr: Error) => {
+          clearTimeout(timer);
+          reject(this.translateSSHError(streamErr));
+        });
+      });
+    });
+  }
+
+  private async getSftp(): Promise<SFTPWrapper> {
+    if (this._state !== "connected" || !this._client) {
       throw new BifrostError(
         `Cannot run SFTP in state: ${this._state}. Call connect() first`,
         "INVALID_STATE"
       );
     }
 
-    if (!this._config || !this._controlPath) {
-      throw new BifrostError("No config or control path", "INVALID_STATE");
-    }
+    const client = this._client;
 
-    const args = [
-      "sftp",
-      "-o", `ControlPath=${this._controlPath}`,
-      "-b", "-",
-      this.getDestination(),
-    ];
-    
-    const proc = Bun.spawn(args, {
-      stdin: new Response(sftpCommand).body,
-      stdout: "pipe",
-      stderr: "pipe",
+    return new Promise<SFTPWrapper>((resolve, reject) => {
+      client.sftp((err, sftp) => {
+        if (err) {
+          reject(this.translateSSHError(err));
+          return;
+        }
+        resolve(sftp);
+      });
     });
-
-    try {
-      const exitCode = await withTimeout(proc.exited, timeout, "SFTP operation");
-      const stderr = await new Response(proc.stderr).text();
-
-      if (exitCode !== 0) {
-        throw this.translateSSHError(exitCode, stderr);
-      }
-    } catch (error) {
-      proc.kill();
-      throw error;
-    }
   }
 
   async upload(localPath: string, remotePath: string): Promise<void> {
-    await this.runSftp(`put -r "${localPath}" "${remotePath}"`);
+    const sftp = await this.getSftp();
+
+    return new Promise<void>((resolve, reject) => {
+      sftp.fastPut(localPath, remotePath, (err) => {
+        sftp.end();
+        if (err) {
+          reject(new BifrostError(
+            `Upload failed: ${err.message}`,
+            "COMMAND_FAILED"
+          ));
+          return;
+        }
+        resolve();
+      });
+    });
   }
 
   async download(remotePath: string, localPath: string): Promise<void> {
-    await this.runSftp(`get -r "${remotePath}" "${localPath}"`);
+    const sftp = await this.getSftp();
+
+    return new Promise<void>((resolve, reject) => {
+      sftp.fastGet(remotePath, localPath, (err) => {
+        sftp.end();
+        if (err) {
+          reject(new BifrostError(
+            `Download failed: ${err.message}`,
+            "COMMAND_FAILED"
+          ));
+          return;
+        }
+        resolve();
+      });
+    });
   }
 
   async ensureConnected(): Promise<void> {
@@ -388,8 +340,6 @@ export class BifrostManager implements AsyncDisposable {
       if (this._state === "disconnected") {
         this._state = "connecting";
         try {
-          this.cleanup();
-          await this.ensureSocketDir();
           await this.doConnect();
           this._state = "connected";
         } catch (error) {
@@ -406,8 +356,43 @@ export class BifrostManager implements AsyncDisposable {
         );
       }
 
-      const alive = await this.isConnected();
-      if (!alive) {
+      if (!this._client) {
+        this._state = "connecting";
+        try {
+          await this.doConnect();
+          this._state = "connected";
+        } catch (error) {
+          this._state = "disconnected";
+          throw error;
+        }
+        return;
+      }
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("Health check timeout")), 5000);
+          this._client!.exec("echo 1", (err, stream) => {
+            if (err) {
+              clearTimeout(timer);
+              reject(err);
+              return;
+            }
+            stream.on("close", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+            stream.on("error", (e: Error) => {
+              clearTimeout(timer);
+              reject(e);
+            });
+            stream.resume();
+          });
+        });
+      } catch {
+        if (this._client) {
+          try { this._client.end(); } catch {}
+          this._client = null;
+        }
         this._state = "connecting";
         try {
           await this.doConnect();
@@ -425,44 +410,61 @@ export class BifrostManager implements AsyncDisposable {
       throw new BifrostError("No config loaded", "INVALID_STATE");
     }
 
-    const args = [
-      "ssh",
-      "-fN",
-      "-o", "ControlMaster=auto",
-      "-o", `ControlPath=${this._controlPath}`,
-      "-o", `ControlPersist=${this._config.controlPersist}`,
-      "-o", `ServerAliveInterval=${this._config.serverAliveInterval}`,
-      "-o", `ConnectTimeout=${this._config.connectTimeout}`,
-      "-o", "StrictHostKeyChecking=accept-new",
-      "-i", this._config.keyPath,
-      "-p", String(this._config.port),
-      this.getDestination(),
-    ];
+    const config = this._config;
+    const privateKey = readFileSync(config.keyPath, "utf-8");
 
-    const proc = Bun.spawn(args, {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const timeoutMs = (this._config.connectTimeout + 5) * 1000;
-    const exitCode = await withTimeout(proc.exited, timeoutMs, "SSH connect");
-    const stderr = await new Response(proc.stderr).text();
-
-    if (exitCode !== 0) {
-      throw this.translateSSHError(exitCode, stderr);
+    if (this._client) {
+      try { this._client.end(); } catch {}
+      this._client = null;
     }
+
+    const client = new Client();
+    this._client = client;
+
+    const timeoutMs = (config.connectTimeout + 5) * 1000;
+
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        client.end();
+        reject(new BifrostError(
+          `SSH connect timed out after ${timeoutMs}ms`,
+          "TIMEOUT"
+        ));
+      }, timeoutMs);
+
+      client.on("ready", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+
+      client.on("error", (err: Error) => {
+        clearTimeout(timer);
+        this._client = null;
+        reject(this.translateSSHError(err));
+      });
+
+      client.on("close", () => {
+        if (this._state === "connected") {
+          this._state = "disconnected";
+          this._client = null;
+        }
+      });
+
+      client.connect({
+        host: config.host,
+        port: config.port,
+        username: config.user,
+        privateKey,
+        readyTimeout: timeoutMs,
+        keepaliveInterval: config.serverAliveInterval * 1000,
+        keepaliveCountMax: 3,
+      });
+    });
   }
 
-  cleanup(): void {
-    try {
-      const files = readdirSync(SOCKET_DIR);
-      for (const file of files) {
-        try {
-          unlinkSync(`${SOCKET_DIR}/${file}`);
-        } catch {}
-      }
-    } catch {}
-  }
+  /** No-op — retained for backwards compatibility. ssh2 has no socket files. */
+  cleanup(): void {}
+
 }
 
 export const bifrostManager = new BifrostManager();

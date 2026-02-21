@@ -16,10 +16,6 @@ export function getDefaultConfigPath(): string {
   return join(getConfigDir(), "bifrost.json");
 }
 
-export function getSocketDir(): string {
-  return join(homedir(), ".ssh", "bifrost-control");
-}
-
 export function isWindows(): boolean {
   return IS_WINDOWS;
 }
