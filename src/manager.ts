@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import { Client, type SFTPWrapper } from "ssh2";
 import type { BifrostServerConfig } from "./config";
 import type { PublicKeyAuthMethod } from "ssh2";
+import { getSSHConfigKeysForHost } from "./keys";
 
 export type ConnectionState = 
   | "disconnected"
@@ -405,6 +406,31 @@ export class BifrostManager implements AsyncDisposable {
     });
   }
 
+  private resolveKeyFiles(config: BifrostServerConfig): string[] {
+    // 1. Explicit keyPath — single key, highest priority
+    if (config.keyPath) {
+      return [config.keyPath];
+    }
+
+    // 2. Explicit keys[] — user-specified list per server
+    if (config.keys && config.keys.length > 0) {
+      return config.keys;
+    }
+
+    // 3. SSH config IdentityFile for this host
+    const sshConfigKeys = getSSHConfigKeysForHost(config.host);
+    if (sshConfigKeys.length > 0) {
+      return sshConfigKeys;
+    }
+
+    // 4. Auto-discovered keys (last resort fallback)
+    if (this._discoveredKeys.length > 0) {
+      return this._discoveredKeys;
+    }
+
+    return [];
+  }
+
   private async doConnect(): Promise<void> {
     if (!this._config) {
       throw new BifrostError("No config loaded", "INVALID_STATE");
@@ -431,10 +457,11 @@ export class BifrostManager implements AsyncDisposable {
       keepaliveCountMax: 3,
     };
 
-    if (config.keyPath) {
-      connectConfig["privateKey"] = readFileSync(config.keyPath, "utf-8");
-    } else if (this._discoveredKeys.length > 0) {
-      const authMethods: PublicKeyAuthMethod[] = this._discoveredKeys.map(keyFile => ({
+    const keyFiles = this.resolveKeyFiles(config);
+    if (keyFiles.length === 1) {
+      connectConfig["privateKey"] = readFileSync(keyFiles[0]!, "utf-8");
+    } else if (keyFiles.length > 1) {
+      const authMethods: PublicKeyAuthMethod[] = keyFiles.map(keyFile => ({
         type: "publickey" as const,
         username: config.user,
         key: readFileSync(keyFile, "utf-8"),
@@ -442,7 +469,7 @@ export class BifrostManager implements AsyncDisposable {
       connectConfig["authHandler"] = authMethods;
     } else {
       throw new BifrostError(
-        "No keyPath configured and no SSH keys discovered. Set keyPath or enable key discovery.",
+        "No SSH keys available. Set keyPath, keys[], or enable key discovery.",
         "AUTH_FAILED"
       );
     }

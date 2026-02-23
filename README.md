@@ -38,7 +38,7 @@ Create `~/.config/opencode/bifrost.json`:
 }
 ```
 
-#### Multiple servers
+#### Multiple servers with explicit keys
 
 ```json
 {
@@ -50,7 +50,7 @@ Create `~/.config/opencode/bifrost.json`:
     "staging": {
       "host": "10.0.0.5",
       "user": "deploy",
-      "port": 2222
+      "keys": ["~/.ssh/staging_ed25519", "~/.ssh/staging_rsa"]
     },
     "dev": "root@dev.example.com:2222"
   },
@@ -58,9 +58,9 @@ Create `~/.config/opencode/bifrost.json`:
 }
 ```
 
-#### Minimal config (with key discovery)
+#### Minimal config (uses SSH config + auto-discovery)
 
-When `keyPath` is omitted, Bifrost automatically finds and tries SSH keys from `~/.ssh/`:
+When neither `keyPath` nor `keys` is set, Bifrost checks your `~/.ssh/config` for `IdentityFile` mappings, then falls back to auto-discovery:
 
 ```json
 {
@@ -69,8 +69,6 @@ When `keyPath` is omitted, Bifrost automatically finds and tries SSH keys from `
   }
 }
 ```
-
-Bifrost scans `~/.ssh/` for private keys and tries them in order: `id_ed25519` → `id_ecdsa` → `id_rsa` → `id_dsa` → others alphabetically.
 
 ### 3. Restart OpenCode
 
@@ -84,7 +82,8 @@ The plugin is installed automatically on startup.
 |-------|----------|---------|-------------|
 | `host` | Yes | - | Server IP or hostname |
 | `user` | No | `root` | SSH username |
-| `keyPath` | No | auto-discovered | Path to SSH private key (supports `~`) |
+| `keyPath` | No | - | Path to a single SSH private key (supports `~`) |
+| `keys` | No | - | Array of SSH key paths to try in order (supports `~`) |
 | `port` | No | `22` | SSH port |
 | `connectTimeout` | No | `10` | Connection timeout in seconds |
 | `serverAliveInterval` | No | `30` | Keepalive interval in seconds |
@@ -123,6 +122,61 @@ It's automatically treated as a single server named `"default"`.
 
 > **Note:** Password authentication is not supported. Use SSH keys only.
 
+## Key Resolution
+
+When connecting to a server, Bifrost resolves SSH keys in this order:
+
+| Priority | Source | Config field | Description |
+|----------|--------|-------------|-------------|
+| 1 | Explicit single key | `keyPath` | One specific key for this server |
+| 2 | Explicit key list | `keys` | Multiple keys to try, in the order you specify |
+| 3 | SSH config | `~/.ssh/config` | `IdentityFile` entries matching the server's hostname |
+| 4 | Auto-discovery | `~/.ssh/` scan | All private keys found, sorted by algorithm priority |
+
+The first source that provides keys wins — later sources are not consulted. This prevents the "too many auth attempts" problem where SSH servers reject connections after 3-6 failed key tries.
+
+### Recommended setup
+
+For best results, assign keys explicitly per server using `keyPath` (single key) or `keys` (multiple):
+
+```json
+{
+  "servers": {
+    "production": {
+      "host": "192.168.1.100",
+      "keyPath": "~/.ssh/prod_key"
+    },
+    "staging": {
+      "host": "10.0.0.5",
+      "keys": ["~/.ssh/staging_ed25519", "~/.ssh/staging_rsa"]
+    }
+  }
+}
+```
+
+If you already have `~/.ssh/config` with `IdentityFile` entries, you don't need to configure keys at all — Bifrost reads them automatically:
+
+```
+# ~/.ssh/config
+Host 192.168.1.100
+    IdentityFile ~/.ssh/prod_key
+
+Host 10.0.0.5
+    User deploy
+    IdentityFile ~/.ssh/staging_ed25519
+```
+
+```json
+{
+  "servers": {
+    "production": { "host": "192.168.1.100" },
+    "staging": { "host": "10.0.0.5" }
+  }
+}
+```
+
+Auto-discovery (`~/.ssh/` scan) is the last resort and tries all keys — use it only when you have few keys or don't care about attempt limits.
+
 ## Usage
 
 Once configured, the agent automatically uses Bifrost when you mention:
@@ -159,18 +213,6 @@ Once configured, the agent automatically uses Bifrost when you mention:
 ```
 
 The agent automatically passes the `server` parameter based on context.
-
-## Key Discovery
-
-When a server has no `keyPath` configured and `keyDiscovery` is enabled (default), Bifrost automatically scans `~/.ssh/` for private keys.
-
-Discovery rules:
-- Looks for files starting with `-----BEGIN` (actual private key files)
-- Skips `.pub` files, `known_hosts`, `config`, `authorized_keys`
-- On macOS/Linux: only uses keys with secure permissions (`600` or `400`)
-- Tries keys in priority order: `id_ed25519` → `id_ecdsa` → `id_rsa` → `id_dsa` → rest alphabetically
-
-To disable: set `"keyDiscovery": false` in your config.
 
 ## How It Works
 

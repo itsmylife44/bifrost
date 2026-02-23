@@ -26,6 +26,9 @@ export const BifrostServerSchema = z.object({
   keyPath: z
     .string()
     .optional(),
+  keys: z
+    .array(z.string())
+    .optional(),
   port: z
     .number()
     .int()
@@ -158,12 +161,18 @@ function resolveServerEntry(
   }
 
   const resolved = { ...entry };
-
   if (resolved.keyPath) {
     resolved.keyPath = expandTildePath(resolved.keyPath);
     validateKeyFile(resolved.keyPath);
   }
 
+  if (resolved.keys) {
+    resolved.keys = resolved.keys.map((k) => {
+      const expanded = expandTildePath(k);
+      validateKeyFile(expanded);
+      return expanded;
+    });
+  }
   return resolved;
 }
 

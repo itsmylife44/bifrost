@@ -46,6 +46,18 @@ describe("BifrostServerSchema", () => {
       const result = BifrostServerSchema.parse(input);
       expect(result.keyPath).toBeUndefined();
     });
+
+    it("parses config with keys array", () => {
+      const input = { host: "example.com", keys: ["/path/to/key1", "/path/to/key2"] };
+      const result = BifrostServerSchema.parse(input);
+      expect(result.keys).toEqual(["/path/to/key1", "/path/to/key2"]);
+    });
+
+    it("allows optional keys", () => {
+      const input = { host: "example.com" };
+      const result = BifrostServerSchema.parse(input);
+      expect(result.keys).toBeUndefined();
+    });
   });
 
   describe("invalid config validation", () => {
