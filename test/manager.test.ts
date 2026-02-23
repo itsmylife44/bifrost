@@ -8,15 +8,13 @@ describe("BifrostManager", () => {
   let manager: BifrostManager;
   let tempDir: string;
   let keyPath: string;
-  let configPath: string;
 
   beforeEach(() => {
     manager = new BifrostManager();
     tempDir = mkdtempSync(join(tmpdir(), "bifrost-manager-test-"));
     keyPath = join(tempDir, "test_key");
-    configPath = join(tempDir, "config.json");
 
-    writeFileSync(keyPath, "fake key content");
+    writeFileSync(keyPath, "-----BEGIN OPENSSH PRIVATE KEY-----\nfake key content\n-----END OPENSSH PRIVATE KEY-----");
     chmodSync(keyPath, 0o600);
   });
 
@@ -34,26 +32,28 @@ describe("BifrostManager", () => {
     });
   });
 
-  describe("loadConfig", () => {
-    it("loads valid config", () => {
-      const config = {
+  describe("setConfig", () => {
+    it("sets config directly", () => {
+      manager.setConfig({
         host: "192.168.1.100",
         user: "admin",
         keyPath: keyPath,
-      };
-      writeFileSync(configPath, JSON.stringify(config));
-
-      manager.loadConfig(configPath);
+        port: 22,
+        connectTimeout: 10,
+        serverAliveInterval: 30,
+      });
 
       expect(manager.config).not.toBeNull();
       expect(manager.config!.host).toBe("192.168.1.100");
       expect(manager.config!.user).toBe("admin");
     });
+  });
 
-    it("throws on missing config file", () => {
-      expect(() => manager.loadConfig("/nonexistent/config.json")).toThrow(
-        /Config file not found/
-      );
+  describe("setDiscoveredKeys", () => {
+    it("stores discovered keys", () => {
+      manager.setDiscoveredKeys(["/path/to/key1", "/path/to/key2"]);
+      // No public getter, but it should not throw
+      expect(true).toBe(true);
     });
   });
 

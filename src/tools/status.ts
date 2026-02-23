@@ -1,5 +1,5 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool";
-import { bifrostManager } from "../manager";
+import { bifrostRegistry } from "../registry";
 import { existsSync } from "fs";
 import { getDefaultConfigPath } from "../paths";
 
@@ -15,25 +15,32 @@ export const bifrost_status: ToolDefinition = tool({
         return `🌈 Bifrost Status\nState: Disconnected\nError: No configuration found at ${configPath}`;
       }
 
-      if (!bifrostManager.config) {
-        bifrostManager.loadConfig(configPath);
+      if (!bifrostRegistry.config) {
+        bifrostRegistry.loadConfig(configPath);
       }
 
-      const connected = await bifrostManager.isConnected();
-      const config = bifrostManager.config;
+      const servers = bifrostRegistry.listServers();
 
-      if (!config) {
-        return `🌈 Bifrost Status\nState: Disconnected\nError: Failed to load configuration`;
+      if (servers.length === 0) {
+        return "🌈 Bifrost Status\nNo servers configured";
       }
 
-      const state = connected ? "Connected" : "Disconnected";
-      const server = `${config.user}@${config.host}:${config.port}`;
+      let output = "🌈 Bifrost Status\n";
 
-      let output = `🌈 Bifrost Status\nState: ${state}\nServer: ${server}`;
+      for (const server of servers) {
+        const flags: string[] = [];
+        if (server.isDefault) flags.push("default");
+        if (server.isActive) flags.push("active");
+        const flagStr = flags.length > 0 ? ` (${flags.join(", ")})` : "";
 
-      if (connected) {
-        output += "\nHealth: Connection alive";
+        const stateIcon = server.state === "connected" ? "🟢" : "⚪";
+
+        output += `\n${stateIcon} ${server.name}${flagStr}: ${server.user}@${server.host}:${server.port} [${server.state}]`;
       }
+
+      const connected = bifrostRegistry.connectedCount;
+      const total = servers.length;
+      output += `\n\n${connected}/${total} connected`;
 
       return output;
     } catch (error) {

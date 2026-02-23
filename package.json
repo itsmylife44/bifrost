@@ -1,7 +1,7 @@
 {
   "name": "opencode-bifrost",
-  "version": "2.0.0",
-  "description": "OpenCode plugin for persistent cross-platform SSH connections",
+  "version": "3.0.0",
+  "description": "OpenCode plugin for multi-server persistent SSH connections with key discovery",
   "author": "itsmylife44",
   "license": "MIT",
   "repository": {

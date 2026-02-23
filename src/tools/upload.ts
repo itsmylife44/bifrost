@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "fs";
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool";
-import { bifrostManager } from "../manager";
+import { bifrostRegistry } from "../registry";
 import { validatePath } from "../security";
 
 export const bifrost_upload: ToolDefinition = tool({
@@ -13,6 +13,10 @@ export const bifrost_upload: ToolDefinition = tool({
     remotePath: tool.schema
       .string()
       .describe("Remote file path destination"),
+    server: tool.schema
+      .string()
+      .optional()
+      .describe("Name of the server to upload to. If not specified, uses the active or default server."),
   },
   execute: async (args) => {
     try {
@@ -30,22 +34,24 @@ export const bifrost_upload: ToolDefinition = tool({
         return `Error: Local file not found: ${args.localPath}`;
       }
 
-      await bifrostManager.ensureConnected();
+      if (!bifrostRegistry.config) {
+        bifrostRegistry.loadConfig();
+      }
 
-      // Get file size before upload
+      const { name, manager } = await bifrostRegistry.connect(args.server);
+
       const stat = statSync(args.localPath);
       const fileSize = stat.size;
 
-      // Upload
-      await bifrostManager.upload(args.localPath, args.remotePath);
+      await manager.upload(args.localPath, args.remotePath);
 
-      // Get config for display
-      const config = bifrostManager.config;
+      const config = manager.config;
       if (!config) {
         return "Error: No config loaded";
       }
 
-      return `📤 Uploaded ${args.localPath} → ${config.user}@${config.host}:${args.remotePath} (${fileSize} bytes)`;
+      const serverLabel = bifrostRegistry.serverCount > 1 ? ` [${name}]` : "";
+      return `📤 Uploaded${serverLabel} ${args.localPath} → ${config.user}@${config.host}:${args.remotePath} (${fileSize} bytes)`;
     } catch (error) {
       if (error instanceof Error) {
         return `Error: ${error.message}`;

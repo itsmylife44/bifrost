@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { Client, type SFTPWrapper } from "ssh2";
-import type { BifrostConfig } from "./config";
-import { parseConfig } from "./config";
+import type { BifrostServerConfig } from "./config";
+import type { PublicKeyAuthMethod } from "ssh2";
 
 export type ConnectionState = 
   | "disconnected"
@@ -44,15 +44,11 @@ const DEFAULT_MAX_OUTPUT = 10 * 1024 * 1024;
 
 export class BifrostManager implements AsyncDisposable {
   private _state: ConnectionState = "disconnected";
-  private _config: BifrostConfig | null = null;
+  private _config: BifrostServerConfig | null = null;
   private _client: Client | null = null;
   private _mutex: Promise<void> = Promise.resolve();
+  private _discoveredKeys: string[] = [];
 
-  /**
-   * Explicit Resource Management (ES2024)
-   * Enables: `await using manager = new BifrostManager()`
-   * Auto-disconnects when scope exits
-   */
   async [Symbol.asyncDispose](): Promise<void> {
     await this.disconnect();
   }
@@ -61,7 +57,7 @@ export class BifrostManager implements AsyncDisposable {
     return this._state;
   }
 
-  get config(): BifrostConfig | null {
+  get config(): BifrostServerConfig | null {
     return this._config;
   }
 
@@ -78,8 +74,12 @@ export class BifrostManager implements AsyncDisposable {
     }
   }
 
-  loadConfig(configPath: string): void {
-    this._config = parseConfig(configPath);
+  setConfig(config: BifrostServerConfig): void {
+    this._config = config;
+  }
+
+  setDiscoveredKeys(keys: string[]): void {
+    this._discoveredKeys = keys;
   }
 
   private translateSSHError(err: Error): BifrostError {
@@ -89,8 +89,11 @@ export class BifrostManager implements AsyncDisposable {
         msg.includes("permission denied") ||
         msg.includes("publickey") ||
         msg.includes("all configured authentication methods failed")) {
+      const keyInfo = this._config?.keyPath
+        ? `Check key at ${this._config.keyPath}`
+        : `Tried ${this._discoveredKeys.length} discovered key(s)`;
       return new BifrostError(
-        `Authentication failed. Check key at ${this._config?.keyPath}`,
+        `Authentication failed. ${keyInfo}`,
         "AUTH_FAILED"
       );
     }
@@ -126,7 +129,7 @@ export class BifrostManager implements AsyncDisposable {
       }
       
       if (!this._config) {
-        throw new BifrostError("No config loaded. Call loadConfig() first", "INVALID_STATE");
+        throw new BifrostError("No config loaded. Call setConfig() first", "INVALID_STATE");
       }
 
       this._state = "connecting";
@@ -164,9 +167,6 @@ export class BifrostManager implements AsyncDisposable {
     });
   }
 
-  /**
-   * Health check — verifies if the underlying ssh2 client is still connected
-   */
   async isConnected(): Promise<boolean> {
     if (this._state !== "connected" || !this._client) {
       return false;
@@ -411,7 +411,6 @@ export class BifrostManager implements AsyncDisposable {
     }
 
     const config = this._config;
-    const privateKey = readFileSync(config.keyPath, "utf-8");
 
     if (this._client) {
       try { this._client.end(); } catch {}
@@ -422,6 +421,31 @@ export class BifrostManager implements AsyncDisposable {
     this._client = client;
 
     const timeoutMs = (config.connectTimeout + 5) * 1000;
+
+    const connectConfig: Record<string, unknown> = {
+      host: config.host,
+      port: config.port,
+      username: config.user,
+      readyTimeout: timeoutMs,
+      keepaliveInterval: config.serverAliveInterval * 1000,
+      keepaliveCountMax: 3,
+    };
+
+    if (config.keyPath) {
+      connectConfig["privateKey"] = readFileSync(config.keyPath, "utf-8");
+    } else if (this._discoveredKeys.length > 0) {
+      const authMethods: PublicKeyAuthMethod[] = this._discoveredKeys.map(keyFile => ({
+        type: "publickey" as const,
+        username: config.user,
+        key: readFileSync(keyFile, "utf-8"),
+      }));
+      connectConfig["authHandler"] = authMethods;
+    } else {
+      throw new BifrostError(
+        "No keyPath configured and no SSH keys discovered. Set keyPath or enable key discovery.",
+        "AUTH_FAILED"
+      );
+    }
 
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -450,21 +474,9 @@ export class BifrostManager implements AsyncDisposable {
         }
       });
 
-      client.connect({
-        host: config.host,
-        port: config.port,
-        username: config.user,
-        privateKey,
-        readyTimeout: timeoutMs,
-        keepaliveInterval: config.serverAliveInterval * 1000,
-        keepaliveCountMax: 3,
-      });
+      client.connect(connectConfig as Parameters<Client["connect"]>[0]);
     });
   }
 
-  /** No-op — retained for backwards compatibility. ssh2 has no socket files. */
   cleanup(): void {}
-
 }
-
-export const bifrostManager = new BifrostManager();

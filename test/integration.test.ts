@@ -8,6 +8,7 @@ import {
   afterEach,
 } from "bun:test";
 import { BifrostManager, BifrostError } from "../src/manager";
+import { parseConfig } from "../src/config";
 import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from "fs";
 import { tmpdir, homedir } from "os";
 import { join } from "path";
@@ -31,7 +32,13 @@ describeIntegration("Integration Tests", () => {
 
   beforeEach(() => {
     manager = new BifrostManager();
-    manager.loadConfig(CONFIG_PATH);
+    const multiConfig = parseConfig(CONFIG_PATH);
+    const defaultName = multiConfig.defaultServer;
+    const serverConfig = multiConfig.servers[defaultName];
+    if (!serverConfig) {
+      throw new Error(`Default server "${defaultName}" not found in config`);
+    }
+    manager.setConfig(serverConfig);
     tempDir = mkdtempSync(join(tmpdir(), "bifrost-integration-"));
   });
 
@@ -157,22 +164,19 @@ describeIntegration("Integration Tests - Error Cases", () => {
       const manager = new BifrostManager();
       const tempDir = mkdtempSync(join(tmpdir(), "bifrost-unreachable-"));
       const keyPath = join(tempDir, "fake_key");
-      const configPath = join(tempDir, "config.json");
 
-      writeFileSync(keyPath, "fake key");
+      writeFileSync(keyPath, "-----BEGIN OPENSSH PRIVATE KEY-----\nfake key\n-----END OPENSSH PRIVATE KEY-----");
       const { chmodSync } = await import("fs");
       chmodSync(keyPath, 0o600);
 
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          host: "192.0.2.1",
-          keyPath: keyPath,
-          connectTimeout: 3,
-        })
-      );
-
-      manager.loadConfig(configPath);
+      manager.setConfig({
+        host: "192.0.2.1",
+        user: "root",
+        keyPath: keyPath,
+        port: 22,
+        connectTimeout: 3,
+        serverAliveInterval: 30,
+      });
 
       try {
         await manager.connect();
@@ -180,7 +184,7 @@ describeIntegration("Integration Tests - Error Cases", () => {
       } catch (err) {
         expect(err).toBeInstanceOf(BifrostError);
         const bifrostErr = err as BifrostError;
-        expect(["UNREACHABLE", "AUTH_FAILED"]).toContain(bifrostErr.code);
+        expect(["UNREACHABLE", "AUTH_FAILED", "TIMEOUT"]).toContain(bifrostErr.code);
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }

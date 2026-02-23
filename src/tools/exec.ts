@@ -1,7 +1,6 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool";
-import { bifrostManager } from "../manager";
+import { bifrostRegistry } from "../registry";
 import { validatePath, validateCommand } from "../security";
-import { getDefaultConfigPath } from "../paths";
 
 export const bifrost_exec: ToolDefinition = tool({
   description:
@@ -19,15 +18,18 @@ export const bifrost_exec: ToolDefinition = tool({
       .int()
       .default(30000)
       .describe("Command timeout in milliseconds (default: 30000)"),
+    server: tool.schema
+      .string()
+      .optional()
+      .describe("Name of the server to execute on. If not specified, uses the active or default server."),
   },
   execute: async (args) => {
     try {
-      const configPath = getDefaultConfigPath();
-      if (!bifrostManager.config) {
-        bifrostManager.loadConfig(configPath);
+      if (!bifrostRegistry.config) {
+        bifrostRegistry.loadConfig();
       }
 
-      await bifrostManager.ensureConnected();
+      const { name, manager } = await bifrostRegistry.connect(args.server);
 
       const cmdValidation = validateCommand(args.command);
       if (!cmdValidation.valid) {
@@ -40,17 +42,17 @@ export const bifrost_exec: ToolDefinition = tool({
         if (!cwdValidation.valid) {
           return `Error: ${cwdValidation.error}`;
         }
-        // Escape single quotes in cwd for safe shell usage
         const escapedCwd = args.cwd.replace(/'/g, "'\\''");
         builtCommand = `cd '${escapedCwd}' && ${args.command}`;
       }
 
-      const result = await bifrostManager.exec(builtCommand, { 
+      const result = await manager.exec(builtCommand, { 
         timeout: args.timeout,
         maxOutputBytes: 10 * 1024 * 1024,
       });
 
-      let output = `📡 Remote exec: ${args.command}\nExit code: ${result.exitCode}\n\nstdout:\n${result.stdout}`;
+      const serverLabel = bifrostRegistry.serverCount > 1 ? ` [${name}]` : "";
+      let output = `📡 Remote exec${serverLabel}: ${args.command}\nExit code: ${result.exitCode}\n\nstdout:\n${result.stdout}`;
       
       if (result.stderr) {
         output += `\n\nstderr:\n${result.stderr}`;

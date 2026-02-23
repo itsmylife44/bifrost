@@ -7,7 +7,7 @@ import { isWindows } from "./paths";
 const SAFE_HOST_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9.\-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
 const SAFE_USER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_\-]*$/;
 
-export const BifrostConfigSchema = z.object({
+export const BifrostServerSchema = z.object({
   host: z
     .string()
     .min(1)
@@ -15,40 +15,52 @@ export const BifrostConfigSchema = z.object({
     .refine(
       (h) => SAFE_HOST_PATTERN.test(h),
       { message: "Invalid host format. Use IP or hostname without special characters." }
-    )
-    .describe("IP address or hostname of the remote server"),
+    ),
   user: z
     .string()
     .default("root")
     .refine(
       (u) => SAFE_USER_PATTERN.test(u),
       { message: "Invalid username format" }
-    )
-    .describe("SSH username for authentication"),
+    ),
   keyPath: z
     .string()
-    .describe("Path to SSH private key (supports ~ expansion)"),
+    .optional(),
   port: z
     .number()
     .int()
     .positive()
-    .default(22)
-    .describe("SSH port number"),
+    .default(22),
   connectTimeout: z
     .number()
     .int()
     .positive()
-    .default(10)
-    .describe("Connection timeout in seconds"),
+    .default(10),
   serverAliveInterval: z
     .number()
     .int()
     .positive()
-    .default(30)
-    .describe("Keepalive interval in seconds"),
+    .default(30),
 });
 
-export type BifrostConfig = z.infer<typeof BifrostConfigSchema>;
+export type BifrostServerConfig = z.infer<typeof BifrostServerSchema>;
+
+/** @deprecated Use BifrostServerSchema instead */
+export const BifrostConfigSchema = BifrostServerSchema;
+/** @deprecated Use BifrostServerConfig instead */
+export type BifrostConfig = BifrostServerConfig;
+
+const MultiServerRawSchema = z.object({
+  servers: z.record(z.string(), z.union([BifrostServerSchema, z.string()])),
+  default: z.string().optional(),
+  keyDiscovery: z.boolean().default(true),
+});
+
+export interface MultiServerConfig {
+  servers: Record<string, BifrostServerConfig>;
+  defaultServer: string;
+  keyDiscovery: boolean;
+}
 
 function expandTildePath(filePath: string): string {
   if (filePath.startsWith("~/") || filePath.startsWith("~\\") || filePath === "~") {
@@ -95,26 +107,140 @@ function validateKeyFile(keyPath: string): void {
   }
 }
 
-export function parseConfig(configPath: string): BifrostConfig {
+export function parseServerShorthand(input: string): { host: string; user: string; port: number } {
+  let user = "root";
+  let host: string;
+  let port = 22;
+
+  let remainder = input;
+
+  const atIndex = remainder.indexOf("@");
+  if (atIndex !== -1) {
+    user = remainder.slice(0, atIndex);
+    remainder = remainder.slice(atIndex + 1);
+  }
+
+  const colonIndex = remainder.lastIndexOf(":");
+  if (colonIndex !== -1) {
+    const portStr = remainder.slice(colonIndex + 1);
+    const parsedPort = Number(portStr);
+    if (!Number.isNaN(parsedPort) && Number.isInteger(parsedPort) && parsedPort > 0) {
+      port = parsedPort;
+      remainder = remainder.slice(0, colonIndex);
+    }
+  }
+
+  host = remainder;
+
+  if (!SAFE_HOST_PATTERN.test(host)) {
+    throw new Error(`Invalid host in shorthand "${input}": ${host}`);
+  }
+  if (!SAFE_USER_PATTERN.test(user)) {
+    throw new Error(`Invalid user in shorthand "${input}": ${user}`);
+  }
+
+  return { host, user, port };
+}
+
+function resolveServerEntry(
+  name: string,
+  entry: z.infer<typeof BifrostServerSchema> | string,
+): BifrostServerConfig {
+  if (typeof entry === "string") {
+    const parsed = parseServerShorthand(entry);
+    return {
+      host: parsed.host,
+      user: parsed.user,
+      port: parsed.port,
+      connectTimeout: 10,
+      serverAliveInterval: 30,
+    };
+  }
+
+  const resolved = { ...entry };
+
+  if (resolved.keyPath) {
+    resolved.keyPath = expandTildePath(resolved.keyPath);
+    validateKeyFile(resolved.keyPath);
+  }
+
+  return resolved;
+}
+
+function isLegacyFormat(rawJson: unknown): rawJson is Record<string, unknown> {
+  return (
+    typeof rawJson === "object" &&
+    rawJson !== null &&
+    "host" in rawJson &&
+    typeof (rawJson as Record<string, unknown>)["host"] === "string"
+  );
+}
+
+function parseLegacyConfig(rawJson: Record<string, unknown>): MultiServerConfig {
+  if (rawJson["keyPath"] && typeof rawJson["keyPath"] === "string") {
+    rawJson["keyPath"] = expandTildePath(rawJson["keyPath"]);
+  }
+
+  const legacySchema = BifrostServerSchema.extend({
+    keyPath: z.string(),
+  });
+
+  const config = legacySchema.parse(rawJson);
+  validateKeyFile(config.keyPath);
+
+  return {
+    servers: { default: config },
+    defaultServer: "default",
+    keyDiscovery: false,
+  };
+}
+
+function parseMultiServerConfig(rawJson: unknown): MultiServerConfig {
+  const raw = MultiServerRawSchema.parse(rawJson);
+
+  const servers: Record<string, BifrostServerConfig> = {};
+  const serverNames = Object.keys(raw.servers);
+
+  if (serverNames.length === 0) {
+    throw new Error("Config must define at least one server in 'servers'");
+  }
+
+  for (const name of serverNames) {
+    const entry = raw.servers[name];
+    if (entry === undefined) continue;
+    servers[name] = resolveServerEntry(name, entry);
+  }
+
+  const defaultServer = raw.default ?? serverNames[0];
+  if (defaultServer === undefined) {
+    throw new Error("Could not determine default server");
+  }
+
+  if (!(defaultServer in servers)) {
+    throw new Error(`Default server "${defaultServer}" not found in servers`);
+  }
+
+  return {
+    servers,
+    defaultServer,
+    keyDiscovery: raw.keyDiscovery,
+  };
+}
+
+export function parseConfig(configPath: string): MultiServerConfig {
   try {
     if (!existsSync(configPath)) {
       throw new Error(`Config file not found: ${configPath}`);
     }
 
     const rawContent = readFileSync(configPath, "utf-8");
-    const rawJson = JSON.parse(rawContent);
+    const rawJson: unknown = JSON.parse(rawContent);
 
-    // Expand tilde in keyPath before validation
-    if (rawJson.keyPath) {
-      rawJson.keyPath = expandTildePath(rawJson.keyPath);
+    if (isLegacyFormat(rawJson)) {
+      return parseLegacyConfig(rawJson as Record<string, unknown>);
     }
 
-    const config = BifrostConfigSchema.parse(rawJson);
-
-    // Validate key file after schema parsing
-    validateKeyFile(config.keyPath);
-
-    return config;
+    return parseMultiServerConfig(rawJson);
   } catch (err) {
     if (err instanceof Error) {
       if (err.name === "ZodError") {
@@ -136,7 +262,15 @@ export function parseConfig(configPath: string): BifrostConfig {
         throw new Error(`Invalid config: ${err.message}`);
       }
 
-      if (err.message.startsWith("Key file") || err.message.startsWith("Failed to check")) {
+      if (
+        err.message.startsWith("Key file") ||
+        err.message.startsWith("Failed to check") ||
+        err.message.startsWith("Config file not found") ||
+        err.message.startsWith("Invalid host") ||
+        err.message.startsWith("Invalid user") ||
+        err.message.startsWith("Default server") ||
+        err.message.startsWith("Config must define")
+      ) {
         throw err;
       }
 

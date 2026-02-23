@@ -1,6 +1,6 @@
 import { statSync } from "fs";
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool";
-import { bifrostManager } from "../manager";
+import { bifrostRegistry } from "../registry";
 import { validatePath } from "../security";
 
 export const bifrost_download: ToolDefinition = tool({
@@ -13,6 +13,10 @@ export const bifrost_download: ToolDefinition = tool({
     localPath: tool.schema
       .string()
       .describe("Local file path destination"),
+    server: tool.schema
+      .string()
+      .optional()
+      .describe("Name of the server to download from. If not specified, uses the active or default server."),
   },
   execute: async (args) => {
     try {
@@ -26,21 +30,24 @@ export const bifrost_download: ToolDefinition = tool({
         return `Error: ${localValidation.error}`;
       }
 
-      await bifrostManager.ensureConnected();
+      if (!bifrostRegistry.config) {
+        bifrostRegistry.loadConfig();
+      }
 
-      await bifrostManager.download(args.remotePath, args.localPath);
+      const { name, manager } = await bifrostRegistry.connect(args.server);
 
-      // Get file size after download
+      await manager.download(args.remotePath, args.localPath);
+
       const stat = statSync(args.localPath);
       const fileSize = stat.size;
 
-      // Get config for display
-      const config = bifrostManager.config;
+      const config = manager.config;
       if (!config) {
         return "Error: No config loaded";
       }
 
-      return `📥 Downloaded ${config.user}@${config.host}:${args.remotePath} → ${args.localPath} (${fileSize} bytes)`;
+      const serverLabel = bifrostRegistry.serverCount > 1 ? ` [${name}]` : "";
+      return `📥 Downloaded${serverLabel} ${config.user}@${config.host}:${args.remotePath} → ${args.localPath} (${fileSize} bytes)`;
     } catch (error) {
       if (error instanceof Error) {
         return `Error: ${error.message}`;
