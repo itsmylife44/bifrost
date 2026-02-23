@@ -1,8 +1,5 @@
-import { readFileSync } from "fs";
 import { Client, type SFTPWrapper } from "ssh2";
 import type { BifrostServerConfig } from "./config";
-import type { PublicKeyAuthMethod } from "ssh2";
-import { getSSHConfigKeysForHost } from "./keys";
 
 export type ConnectionState = 
   | "disconnected"
@@ -48,7 +45,7 @@ export class BifrostManager implements AsyncDisposable {
   private _config: BifrostServerConfig | null = null;
   private _client: Client | null = null;
   private _mutex: Promise<void> = Promise.resolve();
-  private _discoveredKeys: string[] = [];
+  private _agent: string | undefined;
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.disconnect();
@@ -79,8 +76,8 @@ export class BifrostManager implements AsyncDisposable {
     this._config = config;
   }
 
-  setDiscoveredKeys(keys: string[]): void {
-    this._discoveredKeys = keys;
+  setAgent(agent: string): void {
+    this._agent = agent;
   }
 
   private translateSSHError(err: Error): BifrostError {
@@ -90,11 +87,8 @@ export class BifrostManager implements AsyncDisposable {
         msg.includes("permission denied") ||
         msg.includes("publickey") ||
         msg.includes("all configured authentication methods failed")) {
-      const keyInfo = this._config?.keyPath
-        ? `Check key at ${this._config.keyPath}`
-        : `Tried ${this._discoveredKeys.length} discovered key(s)`;
       return new BifrostError(
-        `Authentication failed. ${keyInfo}`,
+        `Authentication failed for ${this._config?.user}@${this._config?.host}. Ensure your key is loaded in ssh-agent (ssh-add).`,
         "AUTH_FAILED"
       );
     }
@@ -406,31 +400,6 @@ export class BifrostManager implements AsyncDisposable {
     });
   }
 
-  private resolveKeyFiles(config: BifrostServerConfig): string[] {
-    // 1. Explicit keyPath — single key, highest priority
-    if (config.keyPath) {
-      return [config.keyPath];
-    }
-
-    // 2. Explicit keys[] — user-specified list per server
-    if (config.keys && config.keys.length > 0) {
-      return config.keys;
-    }
-
-    // 3. SSH config IdentityFile for this host
-    const sshConfigKeys = getSSHConfigKeysForHost(config.host);
-    if (sshConfigKeys.length > 0) {
-      return sshConfigKeys;
-    }
-
-    // 4. Auto-discovered keys (last resort fallback)
-    if (this._discoveredKeys.length > 0) {
-      return this._discoveredKeys;
-    }
-
-    return [];
-  }
-
   private async doConnect(): Promise<void> {
     if (!this._config) {
       throw new BifrostError("No config loaded", "INVALID_STATE");
@@ -441,6 +410,13 @@ export class BifrostManager implements AsyncDisposable {
     if (this._client) {
       try { this._client.end(); } catch {}
       this._client = null;
+    }
+
+    if (!this._agent) {
+      throw new BifrostError(
+        "No SSH agent available. Set SSH_AUTH_SOCK (Unix/Mac) or use Pageant (Windows).",
+        "AUTH_FAILED"
+      );
     }
 
     const client = new Client();
@@ -455,24 +431,8 @@ export class BifrostManager implements AsyncDisposable {
       readyTimeout: timeoutMs,
       keepaliveInterval: config.serverAliveInterval * 1000,
       keepaliveCountMax: 3,
+      agent: this._agent,
     };
-
-    const keyFiles = this.resolveKeyFiles(config);
-    if (keyFiles.length === 1) {
-      connectConfig["privateKey"] = readFileSync(keyFiles[0]!, "utf-8");
-    } else if (keyFiles.length > 1) {
-      const authMethods: PublicKeyAuthMethod[] = keyFiles.map(keyFile => ({
-        type: "publickey" as const,
-        username: config.user,
-        key: readFileSync(keyFile, "utf-8"),
-      }));
-      connectConfig["authHandler"] = authMethods;
-    } else {
-      throw new BifrostError(
-        "No SSH keys available. Set keyPath, keys[], or enable key discovery.",
-        "AUTH_FAILED"
-      );
-    }
 
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {

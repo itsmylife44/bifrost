@@ -49,10 +49,9 @@ describe("BifrostManager", () => {
     });
   });
 
-  describe("setDiscoveredKeys", () => {
-    it("stores discovered keys", () => {
-      manager.setDiscoveredKeys(["/path/to/key1", "/path/to/key2"]);
-      // No public getter, but it should not throw
+  describe("setAgent", () => {
+    it("stores agent socket path", () => {
+      manager.setAgent("/tmp/ssh-agent.sock");
       expect(true).toBe(true);
     });
   });

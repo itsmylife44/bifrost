@@ -1,9 +1,10 @@
 import { BifrostManager, BifrostError } from "./manager";
 import type { ConnectionState } from "./manager";
 import type { BifrostServerConfig, MultiServerConfig } from "./config";
-import { parseConfig } from "./config";
-import { discoverSSHKeys } from "./keys";
-import { getDefaultConfigPath } from "./paths";
+import { parseConfig, expandTildePathPublic } from "./config";
+import { getSSHConfigKeysForHost } from "./keys";
+import { getDefaultConfigPath, isWindows } from "./paths";
+import { execSync } from "child_process";
 
 export interface ServerInfo {
   name: string;
@@ -15,12 +16,47 @@ export interface ServerInfo {
   isActive: boolean;
 }
 
+function getAgentSocket(): string | undefined {
+  if (isWindows()) {
+    return process.env["SSH_AUTH_SOCK"] ?? "pageant";
+  }
+  return process.env["SSH_AUTH_SOCK"];
+}
+
+function ensureKeysInAgent(config: BifrostServerConfig): void {
+  const keyPaths: string[] = [];
+
+  if (config.keyPath) {
+    keyPaths.push(config.keyPath);
+  }
+
+  if (config.keys && config.keys.length > 0) {
+    keyPaths.push(...config.keys);
+  }
+
+  if (keyPaths.length === 0) {
+    const sshConfigKeys = getSSHConfigKeysForHost(config.host);
+    keyPaths.push(...sshConfigKeys);
+  }
+
+  for (const keyPath of keyPaths) {
+    const expanded = expandTildePathPublic(keyPath);
+    try {
+      execSync(`ssh-add "${expanded}"`, {
+        stdio: "ignore",
+        timeout: 10_000,
+      });
+    } catch {
+      // ssh-add may fail if key is already loaded or agent is unavailable
+    }
+  }
+}
+
 export class BifrostRegistry {
   private managers = new Map<string, BifrostManager>();
   private _activeServer: string | null = null;
   private _defaultServer: string | null = null;
   private _config: MultiServerConfig | null = null;
-  private _discoveredKeys: string[] = [];
 
   get activeServer(): string | null {
     return this._activeServer;
@@ -39,21 +75,18 @@ export class BifrostRegistry {
     this._config = parseConfig(path);
     this._defaultServer = this._config.defaultServer;
 
-    if (this._config.keyDiscovery) {
-      this._discoveredKeys = discoverSSHKeys();
-    }
-
     for (const [name, serverConfig] of Object.entries(this._config.servers)) {
       this.register(name, serverConfig);
     }
   }
 
   private register(name: string, config: BifrostServerConfig): void {
+    const agentSocket = getAgentSocket();
     const manager = new BifrostManager();
     manager.setConfig(config);
 
-    if (!config.keyPath && this._discoveredKeys.length > 0) {
-      manager.setDiscoveredKeys(this._discoveredKeys);
+    if (agentSocket) {
+      manager.setAgent(agentSocket);
     }
 
     this.managers.set(name, manager);
@@ -96,8 +129,13 @@ export class BifrostRegistry {
 
   async connect(serverName?: string): Promise<{ name: string; manager: BifrostManager }> {
     const name = this.resolveName(serverName);
-    const manager = this.getManager(name);
+    const config = this._config?.servers[name];
 
+    if (config) {
+      ensureKeysInAgent(config);
+    }
+
+    const manager = this.getManager(name);
     await manager.ensureConnected();
     this._activeServer = name;
 

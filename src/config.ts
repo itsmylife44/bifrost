@@ -56,13 +56,11 @@ export type BifrostConfig = BifrostServerConfig;
 const MultiServerRawSchema = z.object({
   servers: z.record(z.string(), z.union([BifrostServerSchema, z.string()])),
   default: z.string().optional(),
-  keyDiscovery: z.boolean().default(true),
 });
 
 export interface MultiServerConfig {
   servers: Record<string, BifrostServerConfig>;
   defaultServer: string;
-  keyDiscovery: boolean;
 }
 
 function expandTildePath(filePath: string): string {
@@ -73,7 +71,7 @@ function expandTildePath(filePath: string): string {
   return filePath;
 }
 
-function validateKeyFile(keyPath: string): void {
+function validateKeyPath(keyPath: string): void {
   const expandedPath = expandTildePath(keyPath);
 
   if (!existsSync(expandedPath)) {
@@ -145,8 +143,12 @@ export function parseServerShorthand(input: string): { host: string; user: strin
   return { host, user, port };
 }
 
+export function expandTildePathPublic(filePath: string): string {
+  return expandTildePath(filePath);
+}
+
 function resolveServerEntry(
-  name: string,
+  _name: string,
   entry: z.infer<typeof BifrostServerSchema> | string,
 ): BifrostServerConfig {
   if (typeof entry === "string") {
@@ -163,13 +165,13 @@ function resolveServerEntry(
   const resolved = { ...entry };
   if (resolved.keyPath) {
     resolved.keyPath = expandTildePath(resolved.keyPath);
-    validateKeyFile(resolved.keyPath);
+    validateKeyPath(resolved.keyPath);
   }
 
   if (resolved.keys) {
     resolved.keys = resolved.keys.map((k) => {
       const expanded = expandTildePath(k);
-      validateKeyFile(expanded);
+      validateKeyPath(expanded);
       return expanded;
     });
   }
@@ -190,17 +192,15 @@ function parseLegacyConfig(rawJson: Record<string, unknown>): MultiServerConfig 
     rawJson["keyPath"] = expandTildePath(rawJson["keyPath"]);
   }
 
-  const legacySchema = BifrostServerSchema.extend({
-    keyPath: z.string(),
-  });
+  const config = BifrostServerSchema.parse(rawJson);
 
-  const config = legacySchema.parse(rawJson);
-  validateKeyFile(config.keyPath);
+  if (config.keyPath) {
+    validateKeyPath(config.keyPath);
+  }
 
   return {
     servers: { default: config },
     defaultServer: "default",
-    keyDiscovery: false,
   };
 }
 
@@ -232,7 +232,6 @@ function parseMultiServerConfig(rawJson: unknown): MultiServerConfig {
   return {
     servers,
     defaultServer,
-    keyDiscovery: raw.keyDiscovery,
   };
 }
 
@@ -273,6 +272,7 @@ export function parseConfig(configPath: string): MultiServerConfig {
 
       if (
         err.message.startsWith("Key file") ||
+        err.message.startsWith("Key path") ||
         err.message.startsWith("Failed to check") ||
         err.message.startsWith("Config file not found") ||
         err.message.startsWith("Invalid host") ||

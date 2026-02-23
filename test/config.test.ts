@@ -150,7 +150,6 @@ describe("parseConfig", () => {
       const result = parseConfig(configPath);
 
       expect(result.defaultServer).toBe("default");
-      expect(result.keyDiscovery).toBe(false);
       expect(result.servers["default"]).toBeDefined();
       expect(result.servers["default"]!.host).toBe("192.168.1.100");
       expect(result.servers["default"]!.user).toBe("admin");
@@ -202,7 +201,6 @@ describe("parseConfig", () => {
       const result = parseConfig(configPath);
 
       expect(result.defaultServer).toBe("main");
-      expect(result.keyDiscovery).toBe(true);
       expect(Object.keys(result.servers)).toHaveLength(2);
       expect(result.servers["main"]!.host).toBe("192.168.1.100");
       expect(result.servers["staging"]!.host).toBe("10.0.0.5");
@@ -240,13 +238,6 @@ describe("parseConfig", () => {
       expect(() => parseConfig(configPath)).toThrow(/at least one server/);
     });
 
-    it("disables key discovery when set to false", () => {
-      const configPath = join(tempDir, "config.json");
-      writeFileSync(configPath, JSON.stringify({ servers: { main: { host: "1.2.3.4" } }, keyDiscovery: false }));
-
-      const result = parseConfig(configPath);
-      expect(result.keyDiscovery).toBe(false);
-    });
   });
 
   describe("error handling", () => {

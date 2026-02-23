@@ -8,6 +8,8 @@ Multi-server persistent SSH connection plugin for [OpenCode](https://github.com/
 
 Bifrost maintains persistent SSH connections to one or more servers using the [ssh2](https://github.com/mscdex/ssh2) library (pure JavaScript), so every command reuses the same connection instead of reconnecting each time. Works cross-platform on macOS, Linux, and Windows.
 
+Bifrost **never reads your private key files**. Authentication runs entirely through your system's ssh-agent.
+
 ![Bifrost Demo](assets/demo.gif)
 
 ## Installation
@@ -28,7 +30,7 @@ Add to your `~/.config/opencode/opencode.json`:
 
 Create `~/.config/opencode/bifrost.json`:
 
-#### Single server (simplest)
+#### Single server
 
 ```json
 {
@@ -38,7 +40,7 @@ Create `~/.config/opencode/bifrost.json`:
 }
 ```
 
-#### Multiple servers with explicit keys
+#### Multiple servers
 
 ```json
 {
@@ -58,21 +60,48 @@ Create `~/.config/opencode/bifrost.json`:
 }
 ```
 
-#### Minimal config (uses SSH config + auto-discovery)
-
-When neither `keyPath` nor `keys` is set, Bifrost checks your `~/.ssh/config` for `IdentityFile` mappings, then falls back to auto-discovery:
-
-```json
-{
-  "servers": {
-    "myserver": { "host": "192.168.1.100" }
-  }
-}
-```
-
 ### 3. Restart OpenCode
 
 The plugin is installed automatically on startup.
+
+## Authentication
+
+Bifrost authenticates exclusively through your system's **ssh-agent**. It never opens or reads private key files directly.
+
+### How it works
+
+1. When you configure `keyPath` or `keys` in bifrost.json, Bifrost runs `ssh-add <path>` to load those keys into your agent before connecting
+2. If keys from `~/.ssh/config` match the server hostname, those are loaded too
+3. ssh2 then authenticates via the agent — no key data ever passes through Bifrost
+
+### Prerequisites
+
+**macOS/Linux:**
+
+```bash
+# Start the agent (usually already running)
+eval "$(ssh-agent -s)"
+
+# Add your key manually (or let Bifrost do it via keyPath/keys config)
+ssh-add ~/.ssh/your_key
+```
+
+**Windows:**
+
+- **OpenSSH Agent**: Enable the `ssh-agent` service in Windows Settings → Apps → Optional Features
+- **Pageant** (PuTTY): Bifrost auto-detects Pageant when `SSH_AUTH_SOCK` is not set
+
+### Key Resolution
+
+When connecting, Bifrost loads keys into the agent in this order:
+
+| Priority | Source | Config field |
+|----------|--------|-------------|
+| 1 | Explicit single key | `keyPath` |
+| 2 | Explicit key list | `keys` |
+| 3 | SSH config | `~/.ssh/config` IdentityFile entries matching the hostname |
+
+If none are configured, the agent must already have the right key loaded.
 
 ## Configuration Reference
 
@@ -82,8 +111,8 @@ The plugin is installed automatically on startup.
 |-------|----------|---------|-------------|
 | `host` | Yes | - | Server IP or hostname |
 | `user` | No | `root` | SSH username |
-| `keyPath` | No | - | Path to a single SSH private key (supports `~`) |
-| `keys` | No | - | Array of SSH key paths to try in order (supports `~`) |
+| `keyPath` | No | - | Path to SSH private key — loaded into agent via `ssh-add` |
+| `keys` | No | - | Array of key paths — each loaded into agent via `ssh-add` |
 | `port` | No | `22` | SSH port |
 | `connectTimeout` | No | `10` | Connection timeout in seconds |
 | `serverAliveInterval` | No | `30` | Keepalive interval in seconds |
@@ -94,7 +123,6 @@ The plugin is installed automatically on startup.
 |-------|----------|---------|-------------|
 | `servers` | Yes | - | Map of server name → config object or shorthand string |
 | `default` | No | first server | Name of the default server |
-| `keyDiscovery` | No | `true` | Auto-discover SSH keys from `~/.ssh/` |
 
 ### String shorthand
 
@@ -120,62 +148,7 @@ The old single-server format still works:
 
 It's automatically treated as a single server named `"default"`.
 
-> **Note:** Password authentication is not supported. Use SSH keys only.
-
-## Key Resolution
-
-When connecting to a server, Bifrost resolves SSH keys in this order:
-
-| Priority | Source | Config field | Description |
-|----------|--------|-------------|-------------|
-| 1 | Explicit single key | `keyPath` | One specific key for this server |
-| 2 | Explicit key list | `keys` | Multiple keys to try, in the order you specify |
-| 3 | SSH config | `~/.ssh/config` | `IdentityFile` entries matching the server's hostname |
-| 4 | Auto-discovery | `~/.ssh/` scan | All private keys found, sorted by algorithm priority |
-
-The first source that provides keys wins — later sources are not consulted. This prevents the "too many auth attempts" problem where SSH servers reject connections after 3-6 failed key tries.
-
-### Recommended setup
-
-For best results, assign keys explicitly per server using `keyPath` (single key) or `keys` (multiple):
-
-```json
-{
-  "servers": {
-    "production": {
-      "host": "192.168.1.100",
-      "keyPath": "~/.ssh/prod_key"
-    },
-    "staging": {
-      "host": "10.0.0.5",
-      "keys": ["~/.ssh/staging_ed25519", "~/.ssh/staging_rsa"]
-    }
-  }
-}
-```
-
-If you already have `~/.ssh/config` with `IdentityFile` entries, you don't need to configure keys at all — Bifrost reads them automatically:
-
-```
-# ~/.ssh/config
-Host 192.168.1.100
-    IdentityFile ~/.ssh/prod_key
-
-Host 10.0.0.5
-    User deploy
-    IdentityFile ~/.ssh/staging_ed25519
-```
-
-```json
-{
-  "servers": {
-    "production": { "host": "192.168.1.100" },
-    "staging": { "host": "10.0.0.5" }
-  }
-}
-```
-
-Auto-discovery (`~/.ssh/` scan) is the last resort and tries all keys — use it only when you have few keys or don't care about attempt limits.
+> **Note:** Password authentication is not supported. Use SSH keys via ssh-agent.
 
 ## Usage
 
@@ -228,8 +201,7 @@ With multiple servers, each gets its own persistent connection managed independe
 
 ## Security
 
-All inputs are validated before execution to prevent injection attacks:
-
+- **Bifrost never reads private key files** — authentication runs through ssh-agent
 - **Path traversal** (`../`) blocked
 - **Command injection** (`;`, `|`, `&`, `` ` ``, `$()`) blocked
 - **Shell expansion** (`*`, `?`, `~`, `{}`) blocked
@@ -239,7 +211,7 @@ All inputs are validated before execution to prevent injection attacks:
 ## Requirements
 
 - OpenCode with plugin support
-- SSH key-based authentication
+- SSH agent running (`ssh-agent` on Unix/Mac, OpenSSH Agent or Pageant on Windows)
 
 ## Development
 

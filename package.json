@@ -1,7 +1,7 @@
 {
   "name": "opencode-bifrost",
-  "version": "3.0.0",
-  "description": "OpenCode plugin for multi-server persistent SSH connections with key discovery",
+  "version": "3.2.0",
+  "description": "OpenCode plugin for multi-server persistent SSH connections via ssh-agent",
   "author": "itsmylife44",
   "license": "MIT",
   "repository": {
