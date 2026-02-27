@@ -6,6 +6,8 @@ import { getSSHConfigKeysForHost } from "./keys";
 import { getDefaultConfigPath, isWindows } from "./paths";
 import { execSync } from "child_process";
 
+const WINDOWS_OPENSSH_AGENT_PIPE = "\\\\.\\pipe\\openssh-ssh-agent";
+
 export interface ServerInfo {
   name: string;
   state: ConnectionState;
@@ -16,11 +18,30 @@ export interface ServerInfo {
   isActive: boolean;
 }
 
-function getAgentSocket(): string | undefined {
-  if (isWindows()) {
-    return process.env["SSH_AUTH_SOCK"] ?? "pageant";
+export function resolveAgentSocket(isWin: boolean, sshAuthSock?: string): string | undefined {
+  if (!isWin) return sshAuthSock;
+
+  const envSock = sshAuthSock?.trim();
+  if (!envSock) return WINDOWS_OPENSSH_AGENT_PIPE;
+
+  const lower = envSock.toLowerCase();
+  if (lower === "pageant") return "pageant";
+
+  const isWindowsPipe = /^[/\\][/\\]\.[/\\]pipe[/\\].+/.test(envSock);
+  const isLikelyPosixSock = envSock.startsWith("/");
+
+  // In native cmd/powershell runs, a posix-looking SSH_AUTH_SOCK often comes
+  // from another shell context and fails in ssh2's Windows agent path.
+  // Prefer the native Windows OpenSSH agent named pipe for this case.
+  if (!isWindowsPipe && isLikelyPosixSock) {
+    return WINDOWS_OPENSSH_AGENT_PIPE;
   }
-  return process.env["SSH_AUTH_SOCK"];
+
+  return envSock;
+}
+
+function getAgentSocket(): string | undefined {
+  return resolveAgentSocket(isWindows(), process.env["SSH_AUTH_SOCK"]);
 }
 
 function ensureKeysInAgent(config: BifrostServerConfig): void {
@@ -39,12 +60,18 @@ function ensureKeysInAgent(config: BifrostServerConfig): void {
     keyPaths.push(...sshConfigKeys);
   }
 
+  const windows = isWindows();
+  const agentSocket = getAgentSocket();
+
   for (const keyPath of keyPaths) {
     const expanded = expandTildePathPublic(keyPath);
     try {
       execSync(`ssh-add "${expanded}"`, {
         stdio: "ignore",
         timeout: 10_000,
+        env: windows && agentSocket
+          ? { ...process.env, SSH_AUTH_SOCK: agentSocket }
+          : process.env,
       });
     } catch {
       // ssh-add may fail if key is already loaded or agent is unavailable
