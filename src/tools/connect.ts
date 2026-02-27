@@ -1,5 +1,6 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool";
 import { bifrostRegistry } from "../registry";
+import { BIFROST_BUILD_VERSION } from "../build-info";
 
 export const bifrost_connect: ToolDefinition = tool({
   description:
@@ -23,7 +24,7 @@ export const bifrost_connect: ToolDefinition = tool({
       const { name, manager } = await bifrostRegistry.connect(args.server);
       const config = manager.config;
 
-      return `🌈 Bifrost bridge established to ${config?.user}@${config?.host}:${config?.port} (${name})\nConnection persistent. Use bifrost_exec to run commands.`;
+      return `🌈 Bifrost bridge established to ${config?.user}@${config?.host}:${config?.port} (${name})\nVersion: ${BIFROST_BUILD_VERSION}\nConnection persistent. Use bifrost_exec to run commands.`;
     } catch (error) {
       if (error instanceof Error) {
         return `Error: ${error.message}`;
