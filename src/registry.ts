@@ -117,14 +117,6 @@ function ensureKeysInAgent(config: BifrostServerConfig): void {
       label: "path-default",
     });
 
-    if (windows && agentSocket) {
-      attempts.push({
-        command: "ssh-add",
-        env: normalizedEnv,
-        label: "path-with-agent",
-      });
-    }
-
     let success = false;
     let lastError: string | null = null;
     let lastLabel: string | null = null;
