@@ -104,17 +104,23 @@ function ensureKeysInAgent(config: BifrostServerConfig): void {
       });
     }
 
-    // PATH fallback (Git Bash/MSYS or user-defined ssh-add)
+    // PATH fallback (Git Bash/MSYS or user-defined ssh-add).
+    // Always normalize SSH_AUTH_SOCK so key loading targets the same agent
+    // configured in BifrostManager.
+    const normalizedEnv = agentSocket
+      ? { ...process.env, SSH_AUTH_SOCK: agentSocket }
+      : process.env;
+
     attempts.push({
       command: "ssh-add",
-      env: process.env,
+      env: normalizedEnv,
       label: "path-default",
     });
 
     if (windows && agentSocket) {
       attempts.push({
         command: "ssh-add",
-        env: { ...process.env, SSH_AUTH_SOCK: agentSocket },
+        env: normalizedEnv,
         label: "path-with-agent",
       });
     }
