@@ -2,6 +2,7 @@ import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool";
 import { bifrostRegistry } from "../registry";
 import { existsSync } from "fs";
 import { getDefaultConfigPath } from "../paths";
+import { BIFROST_BUILD_VERSION } from "../build-info";
 
 export const bifrost_status: ToolDefinition = tool({
   description:
@@ -12,7 +13,7 @@ export const bifrost_status: ToolDefinition = tool({
       const configPath = getDefaultConfigPath();
 
       if (!existsSync(configPath)) {
-        return `🌈 Bifrost Status\nState: Disconnected\nError: No configuration found at ${configPath}`;
+        return `🌈 Bifrost Status\nVersion: ${BIFROST_BUILD_VERSION}\nState: Disconnected\nError: No configuration found at ${configPath}`;
       }
 
       if (!bifrostRegistry.config) {
@@ -22,10 +23,10 @@ export const bifrost_status: ToolDefinition = tool({
       const servers = bifrostRegistry.listServers();
 
       if (servers.length === 0) {
-        return "🌈 Bifrost Status\nNo servers configured";
+        return `🌈 Bifrost Status\nVersion: ${BIFROST_BUILD_VERSION}\nNo servers configured`;
       }
 
-      let output = "🌈 Bifrost Status\n";
+      let output = `🌈 Bifrost Status\nVersion: ${BIFROST_BUILD_VERSION}\n`;
 
       for (const server of servers) {
         const flags: string[] = [];

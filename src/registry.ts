@@ -5,6 +5,10 @@ import { parseConfig, expandTildePathPublic } from "./config";
 import { getSSHConfigKeysForHost } from "./keys";
 import { getDefaultConfigPath, isWindows } from "./paths";
 import { execSync } from "child_process";
+import { existsSync } from "fs";
+import { join } from "path";
+
+const WINDOWS_OPENSSH_AGENT_PIPE = "\\\\.\\pipe\\openssh-ssh-agent";
 
 export interface ServerInfo {
   name: string;
@@ -16,11 +20,53 @@ export interface ServerInfo {
   isActive: boolean;
 }
 
-function getAgentSocket(): string | undefined {
-  if (isWindows()) {
-    return process.env["SSH_AUTH_SOCK"] ?? "pageant";
+export function resolveAgentSocket(isWin: boolean, sshAuthSock?: string): string | undefined {
+  if (!isWin) return sshAuthSock;
+
+  const envSock = sshAuthSock?.trim();
+  if (!envSock) return WINDOWS_OPENSSH_AGENT_PIPE;
+
+  const lower = envSock.toLowerCase();
+  if (lower === "pageant") return "pageant";
+
+  const isWindowsPipe = /^[/\\][/\\]\.[/\\]pipe[/\\].+/.test(envSock);
+  const isLikelyPosixSock = envSock.startsWith("/");
+
+  // In native cmd/powershell runs, a posix-looking SSH_AUTH_SOCK often comes
+  // from another shell context and fails in ssh2's Windows agent path.
+  // Prefer the native Windows OpenSSH agent named pipe for this case.
+  if (!isWindowsPipe && isLikelyPosixSock) {
+    return WINDOWS_OPENSSH_AGENT_PIPE;
   }
-  return process.env["SSH_AUTH_SOCK"];
+
+  return envSock;
+}
+
+function getAgentSocket(): string | undefined {
+  return resolveAgentSocket(isWindows(), process.env["SSH_AUTH_SOCK"]);
+}
+
+function getWindowsOpenSshAdd(): string | null {
+  const systemRoot = process.env["SystemRoot"] ?? "C:\\Windows";
+  const candidates = [
+    join(systemRoot, "System32", "OpenSSH", "ssh-add.exe"),
+    join(systemRoot, "Sysnative", "OpenSSH", "ssh-add.exe"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+function trySshAdd(command: string, keyPath: string, env: NodeJS.ProcessEnv): boolean {
+  execSync(`${command} "${keyPath}"`, {
+    stdio: "ignore",
+    timeout: 10_000,
+    env,
+  });
+  return true;
 }
 
 function ensureKeysInAgent(config: BifrostServerConfig): void {
@@ -39,15 +85,63 @@ function ensureKeysInAgent(config: BifrostServerConfig): void {
     keyPaths.push(...sshConfigKeys);
   }
 
+  const windows = isWindows();
+  const agentSocket = getAgentSocket();
+  const windowsOpenSshAdd = windows ? getWindowsOpenSshAdd() : null;
+
   for (const keyPath of keyPaths) {
     const expanded = expandTildePathPublic(keyPath);
-    try {
-      execSync(`ssh-add "${expanded}"`, {
-        stdio: "ignore",
-        timeout: 10_000,
+    const attempts: Array<{ command: string; env: NodeJS.ProcessEnv; label: string }> = [];
+
+    if (windows && windowsOpenSshAdd) {
+      const openSshEnv = agentSocket
+        ? { ...process.env, SSH_AUTH_SOCK: agentSocket }
+        : process.env;
+      attempts.push({
+        command: `"${windowsOpenSshAdd}"`,
+        env: openSshEnv,
+        label: "windows-openssh",
       });
-    } catch {
-      // ssh-add may fail if key is already loaded or agent is unavailable
+    }
+
+    // PATH fallback (Git Bash/MSYS or user-defined ssh-add).
+    // Always normalize SSH_AUTH_SOCK so key loading targets the same agent
+    // configured in BifrostManager.
+    const normalizedEnv = agentSocket
+      ? { ...process.env, SSH_AUTH_SOCK: agentSocket }
+      : process.env;
+
+    attempts.push({
+      command: "ssh-add",
+      env: normalizedEnv,
+      label: "path-default",
+    });
+
+    let success = false;
+    let lastError: string | null = null;
+    let lastLabel: string | null = null;
+
+    for (const attempt of attempts) {
+      try {
+        if (trySshAdd(attempt.command, expanded, attempt.env)) {
+          success = true;
+          break;
+        }
+      } catch (error) {
+        lastLabel = attempt.label;
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    if (!success && lastError) {
+      const platformHint = windows
+        ? "Ensure Windows OpenSSH ssh-agent is running and prefer native ssh-add.exe from System32 OpenSSH."
+        : "Ensure ssh-agent is running and ssh-add is available in PATH.";
+
+      console.warn(
+        `[bifrost] failed to load SSH key into agent (${expanded}) after ${attempts.length} attempt(s). ` +
+          `Last attempt: ${lastLabel}. ${platformHint} Error: ${lastError}`
+      );
     }
   }
 }
