@@ -89,7 +89,8 @@ ssh-add ~/.ssh/your_key
 **Windows:**
 
 - **OpenSSH Agent**: Enable the `ssh-agent` service in Windows Settings → Apps → Optional Features
-- **Pageant** (PuTTY): Bifrost auto-detects Pageant when `SSH_AUTH_SOCK` is not set
+- **Pageant** (PuTTY): Supported when explicitly configured (`SSH_AUTH_SOCK=pageant`)
+- Default behavior on Windows: if `SSH_AUTH_SOCK` is empty or POSIX-style (for example `/tmp/...`), Bifrost uses `\\.\\pipe\\openssh-ssh-agent`.
 
 ### Key Resolution
 
