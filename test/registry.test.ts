@@ -21,6 +21,10 @@ describe("resolveAgentSocket", () => {
     expect(resolveAgentSocket(true, "pageant")).toBe("pageant");
   });
 
+  it("normalizes explicit pageant value casing on windows", () => {
+    expect(resolveAgentSocket(true, "PAGEANT")).toBe("pageant");
+  });
+
   it("returns SSH_AUTH_SOCK unchanged on non-windows", () => {
     expect(resolveAgentSocket(false, undefined)).toBeUndefined();
     expect(resolveAgentSocket(false, "/tmp/ssh-1234/agent.1")).toBe("/tmp/ssh-1234/agent.1");

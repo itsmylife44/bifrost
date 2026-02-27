@@ -25,6 +25,8 @@ export function resolveAgentSocket(isWin: boolean, sshAuthSock?: string): string
   if (!envSock) return WINDOWS_OPENSSH_AGENT_PIPE;
 
   const lower = envSock.toLowerCase();
+  if (lower === "pageant") return "pageant";
+
   const isWindowsPipe = /^[/\\][/\\]\.[/\\]pipe[/\\].+/.test(envSock);
   const isLikelyPosixSock = envSock.startsWith("/");
 
@@ -58,12 +60,18 @@ function ensureKeysInAgent(config: BifrostServerConfig): void {
     keyPaths.push(...sshConfigKeys);
   }
 
+  const windows = isWindows();
+  const agentSocket = getAgentSocket();
+
   for (const keyPath of keyPaths) {
     const expanded = expandTildePathPublic(keyPath);
     try {
       execSync(`ssh-add "${expanded}"`, {
         stdio: "ignore",
         timeout: 10_000,
+        env: windows && agentSocket
+          ? { ...process.env, SSH_AUTH_SOCK: agentSocket }
+          : process.env,
       });
     } catch {
       // ssh-add may fail if key is already loaded or agent is unavailable

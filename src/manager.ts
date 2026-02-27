@@ -1,5 +1,6 @@
 import { Client, type SFTPWrapper } from "ssh2";
 import type { BifrostServerConfig } from "./config";
+import { isWindows } from "./paths";
 
 export type ConnectionState = 
   | "disconnected"
@@ -82,11 +83,12 @@ export class BifrostManager implements AsyncDisposable {
 
   private translateSSHError(err: Error): BifrostError {
     const msg = err.message.toLowerCase();
+    const windows = isWindows();
 
-    if (msg.includes("pageant is not running") ||
+    if (windows && (msg.includes("pageant is not running") ||
         msg.includes("failed to connect to agent") ||
         msg.includes("invalid cygwin unix socket path") ||
-        msg.includes("problem negotiating cygwin unix socket security")) {
+        msg.includes("problem negotiating cygwin unix socket security"))) {
       return new BifrostError(
         "SSH agent is unavailable on Windows. Start the OpenSSH ssh-agent service, or set SSH_AUTH_SOCK to a valid Windows named pipe (usually \\\\.\\pipe\\openssh-ssh-agent).",
         "AUTH_FAILED"
@@ -424,7 +426,7 @@ export class BifrostManager implements AsyncDisposable {
 
     if (!this._agent) {
       throw new BifrostError(
-        "No SSH agent available. Set SSH_AUTH_SOCK (Unix/Mac) or use Pageant (Windows).",
+        "No SSH agent available. Set SSH_AUTH_SOCK (Unix/Mac), start OpenSSH ssh-agent on Windows, or explicitly set SSH_AUTH_SOCK=pageant.",
         "AUTH_FAILED"
       );
     }
