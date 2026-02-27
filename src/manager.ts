@@ -82,6 +82,16 @@ export class BifrostManager implements AsyncDisposable {
 
   private translateSSHError(err: Error): BifrostError {
     const msg = err.message.toLowerCase();
+
+    if (msg.includes("pageant is not running") ||
+        msg.includes("failed to connect to agent") ||
+        msg.includes("invalid cygwin unix socket path") ||
+        msg.includes("problem negotiating cygwin unix socket security")) {
+      return new BifrostError(
+        "SSH agent is unavailable on Windows. Start the OpenSSH ssh-agent service, or set SSH_AUTH_SOCK to a valid Windows named pipe (usually \\\\.\\pipe\\openssh-ssh-agent).",
+        "AUTH_FAILED"
+      );
+    }
     
     if (msg.includes("authentication") || 
         msg.includes("permission denied") ||

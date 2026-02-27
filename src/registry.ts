@@ -6,6 +6,8 @@ import { getSSHConfigKeysForHost } from "./keys";
 import { getDefaultConfigPath, isWindows } from "./paths";
 import { execSync } from "child_process";
 
+const WINDOWS_OPENSSH_AGENT_PIPE = "\\\\.\\pipe\\openssh-ssh-agent";
+
 export interface ServerInfo {
   name: string;
   state: ConnectionState;
@@ -16,11 +18,28 @@ export interface ServerInfo {
   isActive: boolean;
 }
 
-function getAgentSocket(): string | undefined {
-  if (isWindows()) {
-    return process.env["SSH_AUTH_SOCK"] ?? "pageant";
+export function resolveAgentSocket(isWin: boolean, sshAuthSock?: string): string | undefined {
+  if (!isWin) return sshAuthSock;
+
+  const envSock = sshAuthSock?.trim();
+  if (!envSock) return WINDOWS_OPENSSH_AGENT_PIPE;
+
+  const lower = envSock.toLowerCase();
+  const isWindowsPipe = /^[/\\][/\\]\.[/\\]pipe[/\\].+/.test(envSock);
+  const isLikelyPosixSock = envSock.startsWith("/");
+
+  // In native cmd/powershell runs, a posix-looking SSH_AUTH_SOCK often comes
+  // from another shell context and fails in ssh2's Windows agent path.
+  // Prefer the native Windows OpenSSH agent named pipe for this case.
+  if (!isWindowsPipe && isLikelyPosixSock && lower !== "pageant") {
+    return WINDOWS_OPENSSH_AGENT_PIPE;
   }
-  return process.env["SSH_AUTH_SOCK"];
+
+  return envSock;
+}
+
+function getAgentSocket(): string | undefined {
+  return resolveAgentSocket(isWindows(), process.env["SSH_AUTH_SOCK"]);
 }
 
 function ensureKeysInAgent(config: BifrostServerConfig): void {
