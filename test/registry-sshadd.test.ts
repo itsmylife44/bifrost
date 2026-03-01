@@ -7,6 +7,6 @@ describe("Windows ssh-add safety behavior", () => {
   });
 
   it("normalizes posix SSH_AUTH_SOCK to windows named pipe", () => {
-    expect(resolveAgentSocket(true, "/tmp/ssh-foo/agent.1")).toBe("\\\\.\\pipe\\openssh-ssh-agent");
+    expect(resolveAgentSocket(true, "/tmp/ssh-foo/agent.1")).toBe("//./pipe/openssh-ssh-agent");
   });
 });

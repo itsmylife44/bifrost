@@ -8,7 +8,7 @@ import { execSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
 
-const WINDOWS_OPENSSH_AGENT_PIPE = "\\\\.\\pipe\\openssh-ssh-agent";
+const WINDOWS_OPENSSH_AGENT_PIPE = "//./pipe/openssh-ssh-agent";
 
 export interface ServerInfo {
   name: string;
@@ -30,6 +30,13 @@ export function resolveAgentSocket(isWin: boolean, sshAuthSock?: string): string
   if (lower === "pageant") return "pageant";
 
   const isWindowsPipe = /^[/\\][/\\]\.[/\\]pipe[/\\].+/.test(envSock);
+
+  // Normalize Windows pipe paths to forward slashes for ssh2 compatibility.
+  // ssh2 interprets backslash paths as Cygwin unix sockets and fails.
+  if (isWindowsPipe) {
+    return envSock.replace(/\\/g, "/");
+  }
+
   const isLikelyPosixSock = envSock.startsWith("/");
 
   // In native cmd/powershell runs, a posix-looking SSH_AUTH_SOCK often comes

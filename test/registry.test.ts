@@ -3,18 +3,20 @@ import { resolveAgentSocket } from "../src/registry";
 
 describe("resolveAgentSocket", () => {
   it("returns OpenSSH named pipe on windows when SSH_AUTH_SOCK is missing", () => {
-    expect(resolveAgentSocket(true, undefined)).toBe("\\\\.\\pipe\\openssh-ssh-agent");
-    expect(resolveAgentSocket(true, "")).toBe("\\\\.\\pipe\\openssh-ssh-agent");
-    expect(resolveAgentSocket(true, "   ")).toBe("\\\\.\\pipe\\openssh-ssh-agent");
+    expect(resolveAgentSocket(true, undefined)).toBe("//./pipe/openssh-ssh-agent");
+    expect(resolveAgentSocket(true, "")).toBe("//./pipe/openssh-ssh-agent");
+    expect(resolveAgentSocket(true, "   ")).toBe("//./pipe/openssh-ssh-agent");
   });
 
   it("keeps windows named pipe SSH_AUTH_SOCK on windows", () => {
-    const pipePath = "\\\\.\\pipe\\openssh-ssh-agent";
+    const pipePath = "//./pipe/openssh-ssh-agent";
     expect(resolveAgentSocket(true, pipePath)).toBe(pipePath);
+    // Backslash variant should also be normalized to forward slashes
+    expect(resolveAgentSocket(true, "\\\\.\\pipe\\openssh-ssh-agent")).toBe("//./pipe/openssh-ssh-agent");
   });
 
   it("falls back to OpenSSH named pipe for posix-style SSH_AUTH_SOCK on windows", () => {
-    expect(resolveAgentSocket(true, "/tmp/ssh-1234/agent.1")).toBe("\\\\.\\pipe\\openssh-ssh-agent");
+    expect(resolveAgentSocket(true, "/tmp/ssh-1234/agent.1")).toBe("//./pipe/openssh-ssh-agent");
   });
 
   it("keeps explicit pageant value on windows", () => {
