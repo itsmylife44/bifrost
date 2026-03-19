@@ -76,6 +76,59 @@ function trySshAdd(command: string, keyPath: string, env: NodeJS.ProcessEnv): bo
   return true;
 }
 
+function agentHasIdentitiesMessage(output: string): boolean {
+  const normalized = output.toLowerCase();
+  return !(normalized.includes("no identities") || normalized.includes("the agent has no identities"));
+}
+
+function trySshListIdentities(command: string, env: NodeJS.ProcessEnv): boolean {
+  try {
+    const output = execSync(`${command} -l`, {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+      env,
+    }).toString();
+    return agentHasIdentitiesMessage(output);
+  } catch {
+    return false;
+  }
+}
+
+export function buildSshAddAttempts(
+  windows: boolean,
+  windowsOpenSshAdd: string | null,
+  agentSocket: string | undefined,
+  env: NodeJS.ProcessEnv
+): Array<{ command: string; env: NodeJS.ProcessEnv; label: string }> {
+  const attempts: Array<{ command: string; env: NodeJS.ProcessEnv; label: string }> = [];
+
+  if (windows && windowsOpenSshAdd) {
+    const openSshEnv = agentSocket ? { ...env, SSH_AUTH_SOCK: agentSocket } : env;
+    attempts.push({
+      command: `"${windowsOpenSshAdd}"`,
+      env: openSshEnv,
+      label: "windows-openssh",
+    });
+  }
+
+  const normalizedEnv = agentSocket ? { ...env, SSH_AUTH_SOCK: agentSocket } : env;
+  attempts.push({
+    command: "ssh-add",
+    env: normalizedEnv,
+    label: "path-default",
+  });
+
+  return attempts;
+}
+
+export function shouldDowngradeSshAddFailure(
+  windows: boolean,
+  agentSocket: string | undefined,
+  hasAgentIdentities: boolean
+): boolean {
+  return windows && Boolean(agentSocket) && hasAgentIdentities;
+}
+
 function ensureKeysInAgent(config: BifrostServerConfig): void {
   const keyPaths: string[] = [];
 
@@ -98,31 +151,7 @@ function ensureKeysInAgent(config: BifrostServerConfig): void {
 
   for (const keyPath of keyPaths) {
     const expanded = expandTildePathPublic(keyPath);
-    const attempts: Array<{ command: string; env: NodeJS.ProcessEnv; label: string }> = [];
-
-    if (windows && windowsOpenSshAdd) {
-      const openSshEnv = agentSocket
-        ? { ...process.env, SSH_AUTH_SOCK: agentSocket }
-        : process.env;
-      attempts.push({
-        command: `"${windowsOpenSshAdd}"`,
-        env: openSshEnv,
-        label: "windows-openssh",
-      });
-    }
-
-    // PATH fallback (Git Bash/MSYS or user-defined ssh-add).
-    // Always normalize SSH_AUTH_SOCK so key loading targets the same agent
-    // configured in BifrostManager.
-    const normalizedEnv = agentSocket
-      ? { ...process.env, SSH_AUTH_SOCK: agentSocket }
-      : process.env;
-
-    attempts.push({
-      command: "ssh-add",
-      env: normalizedEnv,
-      label: "path-default",
-    });
+    const attempts = buildSshAddAttempts(windows, windowsOpenSshAdd, agentSocket, process.env);
 
     let success = false;
     let lastError: string | null = null;
@@ -141,6 +170,18 @@ function ensureKeysInAgent(config: BifrostServerConfig): void {
     }
 
     if (!success && lastError) {
+      const hasAgentIdentities = attempts.some((attempt) =>
+        trySshListIdentities(attempt.command, attempt.env)
+      );
+
+      if (shouldDowngradeSshAddFailure(windows, agentSocket, hasAgentIdentities)) {
+        console.info(
+          `[bifrost] skipped ssh-add for key (${expanded}) after ${attempts.length} attempt(s); ` +
+            `agent already exposes identities via ${agentSocket}. Continuing with existing agent keys.`
+        );
+        continue;
+      }
+
       const platformHint = windows
         ? "Ensure Windows OpenSSH ssh-agent is running and prefer native ssh-add.exe from System32 OpenSSH."
         : "Ensure ssh-agent is running and ssh-add is available in PATH.";
