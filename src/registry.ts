@@ -129,7 +129,13 @@ export function shouldDowngradeSshAddFailure(
   return windows && Boolean(agentSocket) && hasAgentIdentities;
 }
 
-function ensureKeysInAgent(config: BifrostServerConfig): void {
+export interface KeyLoadNotice {
+  level: "info" | "warn";
+  message: string;
+}
+
+function ensureKeysInAgent(config: BifrostServerConfig): KeyLoadNotice[] {
+  const notices: KeyLoadNotice[] = [];
   const keyPaths: string[] = [];
 
   if (config.keyPath) {
@@ -175,10 +181,10 @@ function ensureKeysInAgent(config: BifrostServerConfig): void {
       );
 
       if (shouldDowngradeSshAddFailure(windows, agentSocket, hasAgentIdentities)) {
-        console.info(
-          `[bifrost] skipped ssh-add for key (${expanded}) after ${attempts.length} attempt(s); ` +
-            `agent already exposes identities via ${agentSocket}. Continuing with existing agent keys.`
-        );
+        notices.push({
+          level: "info",
+          message: `Skipped ssh-add for key (${expanded}); agent already has identities loaded.`,
+        });
         continue;
       }
 
@@ -186,12 +192,14 @@ function ensureKeysInAgent(config: BifrostServerConfig): void {
         ? "Ensure Windows OpenSSH ssh-agent is running and prefer native ssh-add.exe from System32 OpenSSH."
         : "Ensure ssh-agent is running and ssh-add is available in PATH.";
 
-      console.warn(
-        `[bifrost] failed to load SSH key into agent (${expanded}) after ${attempts.length} attempt(s). ` +
-          `Last attempt: ${lastLabel}. ${platformHint} Error: ${lastError}`
-      );
+      notices.push({
+        level: "warn",
+        message: `Failed to load SSH key (${expanded}) after ${attempts.length} attempt(s). Last: ${lastLabel}. ${platformHint} Error: ${lastError}`,
+      });
     }
   }
+
+  return notices;
 }
 
 export class BifrostRegistry {
@@ -269,19 +277,17 @@ export class BifrostRegistry {
     return this._config?.servers[name] ?? null;
   }
 
-  async connect(serverName?: string): Promise<{ name: string; manager: BifrostManager }> {
+  async connect(serverName?: string): Promise<{ name: string; manager: BifrostManager; notices: KeyLoadNotice[] }> {
     const name = this.resolveName(serverName);
     const config = this._config?.servers[name];
 
-    if (config) {
-      ensureKeysInAgent(config);
-    }
+    const notices = config ? ensureKeysInAgent(config) : [];
 
     const manager = this.getManager(name);
     await manager.ensureConnected();
     this._activeServer = name;
 
-    return { name, manager };
+    return { name, manager, notices };
   }
 
   switchTo(name: string): void {

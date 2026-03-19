@@ -21,10 +21,17 @@ export const bifrost_connect: ToolDefinition = tool({
         bifrostRegistry.loadConfig(args.configPath);
       }
 
-      const { name, manager } = await bifrostRegistry.connect(args.server);
+      const { name, manager, notices } = await bifrostRegistry.connect(args.server);
       const config = manager.config;
 
-      return `🌈 Bifrost bridge established to ${config?.user}@${config?.host}:${config?.port} (${name})\nVersion: ${BIFROST_BUILD_VERSION}\nConnection persistent. Use bifrost_exec to run commands.`;
+      let output = `🌈 Bifrost bridge established to ${config?.user}@${config?.host}:${config?.port} (${name})\nVersion: ${BIFROST_BUILD_VERSION}\nConnection persistent. Use bifrost_exec to run commands.`;
+
+      if (notices.length > 0) {
+        const noticeLines = notices.map((n) => `[${n.level}] ${n.message}`);
+        output += `\n\nNotices:\n${noticeLines.join("\n")}`;
+      }
+
+      return output;
     } catch (error) {
       if (error instanceof Error) {
         return `Error: ${error.message}`;
