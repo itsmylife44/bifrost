@@ -20,7 +20,7 @@ describe("Windows ssh-add safety behavior", () => {
 
     expect(attempts).toHaveLength(2);
     expect(attempts[0]?.label).toBe("windows-openssh");
-    expect(attempts[0]?.command).toBe('"C:\\Windows\\System32\\OpenSSH\\ssh-add.exe"');
+    expect(attempts[0]?.command).toBe("C:\\Windows\\System32\\OpenSSH\\ssh-add.exe");
     expect(attempts[0]?.env.SSH_AUTH_SOCK).toBe("//./pipe/openssh-ssh-agent");
     expect(attempts[1]?.label).toBe("path-default");
     expect(attempts[1]?.command).toBe("ssh-add");
@@ -44,5 +44,16 @@ describe("Windows ssh-add safety behavior", () => {
     expect(shouldDowngradeSshAddFailure(true, undefined, true)).toBe(false);
     expect(shouldDowngradeSshAddFailure(true, "//./pipe/openssh-ssh-agent", false)).toBe(false);
     expect(shouldDowngradeSshAddFailure(false, "/tmp/agent.sock", true)).toBe(false);
+  });
+
+  it("keeps raw windows drive-letter key path unchanged in attempt command", () => {
+    const attempts = buildSshAddAttempts(
+      true,
+      "C:\\Windows\\System32\\OpenSSH\\ssh-add.exe",
+      "//./pipe/openssh-ssh-agent",
+      { PATH: "C:\\Windows\\System32" }
+    );
+
+    expect(attempts[0]?.command).toBe("C:\\Windows\\System32\\OpenSSH\\ssh-add.exe");
   });
 });

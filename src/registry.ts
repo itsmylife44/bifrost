@@ -4,7 +4,7 @@ import type { BifrostServerConfig, MultiServerConfig } from "./config";
 import { parseConfig, expandTildePathPublic } from "./config";
 import { getSSHConfigKeysForHost } from "./keys";
 import { getDefaultConfigPath, isWindows } from "./paths";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
 
@@ -68,7 +68,7 @@ function getWindowsOpenSshAdd(): string | null {
 }
 
 function trySshAdd(command: string, keyPath: string, env: NodeJS.ProcessEnv): boolean {
-  execSync(`${command} "${keyPath}"`, {
+  execFileSync(command, [keyPath], {
     stdio: "ignore",
     timeout: 10_000,
     env,
@@ -83,7 +83,7 @@ function agentHasIdentitiesMessage(output: string): boolean {
 
 function trySshListIdentities(command: string, env: NodeJS.ProcessEnv): boolean {
   try {
-    const output = execSync(`${command} -l`, {
+    const output = execFileSync(command, ["-l"], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 10_000,
       env,
@@ -105,7 +105,7 @@ export function buildSshAddAttempts(
   if (windows && windowsOpenSshAdd) {
     const openSshEnv = agentSocket ? { ...env, SSH_AUTH_SOCK: agentSocket } : env;
     attempts.push({
-      command: `"${windowsOpenSshAdd}"`,
+      command: windowsOpenSshAdd,
       env: openSshEnv,
       label: "windows-openssh",
     });
