@@ -136,27 +136,14 @@ export interface KeyLoadNotice {
 
 function ensureKeysInAgent(config: BifrostServerConfig): KeyLoadNotice[] {
   const notices: KeyLoadNotice[] = [];
-  const keyPaths: string[] = [];
-
-  if (config.keyPath) {
-    keyPaths.push(config.keyPath);
-  }
-
-  if (config.keys && config.keys.length > 0) {
-    keyPaths.push(...config.keys);
-  }
-
-  if (keyPaths.length === 0) {
-    const sshConfigKeys = getSSHConfigKeysForHost(config.host);
-    keyPaths.push(...sshConfigKeys);
-  }
+  const keyPaths = getConfiguredKeyPaths(config);
 
   const windows = isWindows();
   const agentSocket = getAgentSocket();
   const windowsOpenSshAdd = windows ? getWindowsOpenSshAdd() : null;
 
   for (const keyPath of keyPaths) {
-    const expanded = expandTildePathPublic(keyPath);
+    const expanded = keyPath;
     const attempts = buildSshAddAttempts(windows, windowsOpenSshAdd, agentSocket, process.env);
 
     let success = false;
@@ -207,7 +194,7 @@ function getConfiguredKeyPaths(config: BifrostServerConfig): string[] {
 
   if (config.keyPath) keyPaths.push(config.keyPath);
   if (config.keys && config.keys.length > 0) keyPaths.push(...config.keys);
-  if (keyPaths.length === 0) keyPaths.push(...getSSHConfigKeysForHost(config.host));
+  if (keyPaths.length === 0) keyPaths.push(...getSSHConfigKeysForHost(config.originalHost ?? config.host));
 
   return Array.from(new Set(keyPaths.map((keyPath) => expandTildePathPublic(keyPath))));
 }

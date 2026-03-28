@@ -30,6 +30,9 @@ export const BifrostServerSchema = z.object({
   identitiesOnly: z
     .boolean()
     .optional(),
+  originalHost: z
+    .string()
+    .optional(),
   keys: z
     .array(z.string())
     .optional(),
@@ -223,6 +226,7 @@ function resolveServerEntry(
   const resolved = BifrostServerSchema.parse({
     ...normalizedEntry,
     host: sshConfig.hostName ?? normalizedEntry.host,
+    originalHost: sshConfig.hostName ? normalizedEntry.host : undefined,
     user: normalizedEntry.user ?? sshConfig.user,
     port: normalizedEntry.port ?? sshConfig.port,
     identitiesOnly: normalizedEntry.identitiesOnly ?? sshConfig.identitiesOnly,

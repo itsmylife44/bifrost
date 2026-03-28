@@ -149,7 +149,7 @@ class FilteredAgent extends BaseAgent<string | Buffer | ParsedKey> {
 export function shouldFilterAgent(
   config: Pick<BifrostServerConfig, "identitiesOnly">,
 ): boolean {
-  return config.identitiesOnly !== false;
+  return config.identitiesOnly === true;
 }
 
 export class BifrostManager implements AsyncDisposable {
@@ -555,8 +555,9 @@ export class BifrostManager implements AsyncDisposable {
     const timeoutMs = (config.connectTimeout + 5) * 1000;
 
     const publicKeys = readAllowedPublicKeys(this._allowedKeyPaths)
-      .map((content) => utils.parseKey(content))
-      .filter((parsed): parsed is any => !(parsed instanceof Error))
+      .map((content) => utils.parseKey(content) as ParsedKey | ParsedKey[] | Error)
+      .filter((parsed): parsed is ParsedKey | ParsedKey[] => !(parsed instanceof Error))
+      .flatMap((parsed) => Array.isArray(parsed) ? parsed : [parsed])
       .map((parsed) => parsed.getPublicSSH());
     const effectiveAgent = shouldFilterAgent(config)
       ? new FilteredAgent(this._agent, publicKeys)
