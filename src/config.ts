@@ -5,7 +5,7 @@ import { join } from "path";
 import { isWindows } from "./paths";
 import { resolveSSHConfigForHost } from "./keys";
 
-const SAFE_HOST_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9.\-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
+const SAFE_HOST_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._\-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
 const SAFE_USER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_\-]*$/;
 
 export const BifrostServerSchema = z.object({
@@ -259,15 +259,7 @@ function isLegacyFormat(rawJson: unknown): rawJson is Record<string, unknown> {
 }
 
 function parseLegacyConfig(rawJson: Record<string, unknown>): MultiServerConfig {
-  if (rawJson["keyPath"] && typeof rawJson["keyPath"] === "string") {
-    rawJson["keyPath"] = expandTildePath(rawJson["keyPath"]);
-  }
-
   const config = resolveServerEntry("default", BifrostServerEntrySchema.parse(rawJson));
-
-  if (config.keyPath) {
-    validateKeyPath(config.keyPath);
-  }
 
   return {
     servers: { default: config },
