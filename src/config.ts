@@ -3,6 +3,7 @@ import { readFileSync, existsSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { isWindows } from "./paths";
+import { resolveSSHConfigForHost } from "./keys";
 
 const SAFE_HOST_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9.\-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
 const SAFE_USER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_\-]*$/;
@@ -26,6 +27,9 @@ export const BifrostServerSchema = z.object({
   keyPath: z
     .string()
     .optional(),
+  identitiesOnly: z
+    .boolean()
+    .optional(),
   keys: z
     .array(z.string())
     .optional(),
@@ -46,6 +50,50 @@ export const BifrostServerSchema = z.object({
     .default(30),
 });
 
+const BifrostServerEntrySchema = z.object({
+  host: z
+    .string()
+    .min(1)
+    .max(253)
+    .refine(
+      (h) => SAFE_HOST_PATTERN.test(h),
+      { message: "Invalid host format. Use IP or hostname without special characters." }
+    ),
+  user: z
+    .string()
+    .optional()
+    .refine(
+      (u) => u === undefined || SAFE_USER_PATTERN.test(u),
+      { message: "Invalid username format" }
+    ),
+  keyPath: z
+    .string()
+    .optional(),
+  identitiesOnly: z
+    .boolean()
+    .optional(),
+  keys: z
+    .array(z.string())
+    .optional(),
+  port: z
+    .number()
+    .int()
+    .positive()
+    .optional(),
+  connectTimeout: z
+    .number()
+    .int()
+    .positive()
+    .optional(),
+  serverAliveInterval: z
+    .number()
+    .int()
+    .positive()
+    .optional(),
+});
+
+type BifrostServerEntry = z.infer<typeof BifrostServerEntrySchema>;
+
 export type BifrostServerConfig = z.infer<typeof BifrostServerSchema>;
 
 /** @deprecated Use BifrostServerSchema instead */
@@ -54,7 +102,7 @@ export const BifrostConfigSchema = BifrostServerSchema;
 export type BifrostConfig = BifrostServerConfig;
 
 const MultiServerRawSchema = z.object({
-  servers: z.record(z.string(), z.union([BifrostServerSchema, z.string()])),
+  servers: z.record(z.string(), z.union([BifrostServerEntrySchema, z.string()])),
   default: z.string().optional(),
 });
 
@@ -108,10 +156,10 @@ function validateKeyPath(keyPath: string): void {
   }
 }
 
-export function parseServerShorthand(input: string): { host: string; user: string; port: number } {
-  let user = "root";
+function parseServerShorthandEntry(input: string): { host: string; user?: string; port?: number } {
+  let user: string | undefined;
   let host: string;
-  let port = 22;
+  let port: number | undefined;
 
   let remainder = input;
 
@@ -136,11 +184,27 @@ export function parseServerShorthand(input: string): { host: string; user: strin
   if (!SAFE_HOST_PATTERN.test(host)) {
     throw new Error(`Invalid host in shorthand "${input}": ${host}`);
   }
-  if (!SAFE_USER_PATTERN.test(user)) {
+  if (user !== undefined && !SAFE_USER_PATTERN.test(user)) {
     throw new Error(`Invalid user in shorthand "${input}": ${user}`);
   }
 
-  return { host, user, port };
+  const result: { host: string; user?: string; port?: number } = { host };
+  if (user !== undefined) {
+    result.user = user;
+  }
+  if (port !== undefined) {
+    result.port = port;
+  }
+  return result;
+}
+
+export function parseServerShorthand(input: string): { host: string; user: string; port: number } {
+  const parsed = parseServerShorthandEntry(input);
+  return {
+    host: parsed.host,
+    user: parsed.user ?? "root",
+    port: parsed.port ?? 22,
+  };
 }
 
 export function expandTildePathPublic(filePath: string): string {
@@ -149,20 +213,23 @@ export function expandTildePathPublic(filePath: string): string {
 
 function resolveServerEntry(
   _name: string,
-  entry: z.infer<typeof BifrostServerSchema> | string,
+  entry: BifrostServerEntry | string,
 ): BifrostServerConfig {
-  if (typeof entry === "string") {
-    const parsed = parseServerShorthand(entry);
-    return {
-      host: parsed.host,
-      user: parsed.user,
-      port: parsed.port,
-      connectTimeout: 10,
-      serverAliveInterval: 30,
-    };
-  }
+  const normalizedEntry: BifrostServerEntry = typeof entry === "string"
+    ? parseServerShorthandEntry(entry)
+    : entry;
 
-  const resolved = { ...entry };
+  const sshConfig = resolveSSHConfigForHost(normalizedEntry.host);
+  const resolved = BifrostServerSchema.parse({
+    ...normalizedEntry,
+    host: sshConfig.hostName ?? normalizedEntry.host,
+    user: normalizedEntry.user ?? sshConfig.user,
+    port: normalizedEntry.port ?? sshConfig.port,
+    identitiesOnly: normalizedEntry.identitiesOnly ?? sshConfig.identitiesOnly,
+    connectTimeout: normalizedEntry.connectTimeout ?? 10,
+    serverAliveInterval: normalizedEntry.serverAliveInterval ?? 30,
+  });
+
   if (resolved.keyPath) {
     resolved.keyPath = expandTildePath(resolved.keyPath);
     validateKeyPath(resolved.keyPath);
@@ -192,7 +259,7 @@ function parseLegacyConfig(rawJson: Record<string, unknown>): MultiServerConfig 
     rawJson["keyPath"] = expandTildePath(rawJson["keyPath"]);
   }
 
-  const config = BifrostServerSchema.parse(rawJson);
+  const config = resolveServerEntry("default", BifrostServerEntrySchema.parse(rawJson));
 
   if (config.keyPath) {
     validateKeyPath(config.keyPath);
