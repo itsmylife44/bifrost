@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -65,13 +65,63 @@ function getDefaultSSHConfigPath(): string {
   return join(homedir(), ".ssh", "config");
 }
 
+interface CachedSSHConfigBlocks {
+  mtimeMs: number;
+  size: number;
+  blocks: SSHConfigBlock[];
+  absent: boolean;
+}
+
+const sshConfigBlocksCache = new Map<string, CachedSSHConfigBlocks>();
+
 function parseSSHConfigBlocks(configPath = getDefaultSSHConfigPath()): SSHConfigBlock[] {
-  if (!existsSync(configPath)) return [];
+  const prev = sshConfigBlocksCache.get(configPath);
+  if (prev?.absent && !existsSync(configPath)) {
+    return [];
+  }
+  if (!existsSync(configPath)) {
+    sshConfigBlocksCache.set(configPath, {
+      mtimeMs: 0,
+      size: 0,
+      blocks: [],
+      absent: true,
+    });
+    return [];
+  }
+
+  let stat: { mtimeMs: number; size: number };
+  try {
+    stat = statSync(configPath);
+  } catch {
+    sshConfigBlocksCache.set(configPath, {
+      mtimeMs: 0,
+      size: 0,
+      blocks: [],
+      absent: true,
+    });
+    return [];
+  }
+
+  const cached = sshConfigBlocksCache.get(configPath);
+  if (
+    cached &&
+    !cached.absent &&
+    cached.mtimeMs === stat.mtimeMs &&
+    cached.size === stat.size
+  ) {
+    return cached.blocks;
+  }
 
   let content: string;
   try {
     content = readFileSync(configPath, "utf-8");
   } catch {
+    sshConfigBlocksCache.set(configPath, {
+      mtimeMs: 0,
+      size: 0,
+      blocks: [],
+      absent: true,
+    });
     return [];
   }
 
@@ -135,6 +185,12 @@ function parseSSHConfigBlocks(configPath = getDefaultSSHConfigPath()): SSHConfig
   }
 
   flushBlock();
+  sshConfigBlocksCache.set(configPath, {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    blocks,
+    absent: false,
+  });
   return blocks;
 }
 
