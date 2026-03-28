@@ -41,10 +41,7 @@ function hostPatternToRegex(pattern: string): RegExp {
 }
 
 function matchesHostPattern(pattern: string, host: string): boolean {
-  const negated = pattern.startsWith("!");
-  const rawPattern = negated ? pattern.slice(1) : pattern;
-  const matched = hostPatternToRegex(rawPattern).test(host);
-  return negated ? !matched : matched;
+  return hostPatternToRegex(pattern).test(host);
 }
 
 function blockMatchesHost(patterns: string[], host: string): boolean {
@@ -52,7 +49,7 @@ function blockMatchesHost(patterns: string[], host: string): boolean {
 
   for (const pattern of patterns) {
     if (pattern.startsWith("!")) {
-      if (matchesHostPattern(pattern, host)) return false;
+      if (matchesHostPattern(pattern.slice(1), host)) return false;
       continue;
     }
 

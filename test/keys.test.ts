@@ -58,4 +58,18 @@ describe("SSH config parsing", () => {
     const resolved = resolveSSHConfigForHostAtPath("148.251.116.101", configPath);
     expect(resolved.identityFiles.some((file) => file.endsWith("marco_dev"))).toBe(true);
   });
+
+  it("honors negated host patterns as exclusions", () => {
+    writeFileSync(configPath, [
+      "Host * !blocked.example.com",
+      "    IdentitiesOnly yes",
+      "",
+      "Host blocked.example.com",
+      "    IdentityFile /tmp/blocked",
+      "",
+    ].join("\n"));
+
+    expect(resolveSSHConfigForHostAtPath("allowed.example.com", configPath).identitiesOnly).toBe(true);
+    expect(resolveSSHConfigForHostAtPath("blocked.example.com", configPath).identitiesOnly).toBeUndefined();
+  });
 });
