@@ -132,8 +132,13 @@ class FilteredAgent extends BaseAgent<string | Buffer | ParsedKey> {
       return;
     }
 
-    if (optionsOrCb) {
+    if (optionsOrCb && cb) {
       this.inner.sign(pubKey, data, optionsOrCb, cb);
+      return;
+    }
+
+    if (optionsOrCb) {
+      this.inner.sign(pubKey, data, optionsOrCb, () => {});
       return;
     }
 
@@ -554,14 +559,15 @@ export class BifrostManager implements AsyncDisposable {
 
     const timeoutMs = (config.connectTimeout + 5) * 1000;
 
-    const publicKeys = readAllowedPublicKeys(this._allowedKeyPaths)
-      .map((content) => utils.parseKey(content) as ParsedKey | ParsedKey[] | Error)
-      .filter((parsed): parsed is ParsedKey | ParsedKey[] => !(parsed instanceof Error))
-      .flatMap((parsed) => Array.isArray(parsed) ? parsed : [parsed])
-      .map((parsed) => parsed.getPublicSSH());
-    const effectiveAgent = shouldFilterAgent(config)
-      ? new FilteredAgent(this._agent, publicKeys)
-      : this._agent;
+    let effectiveAgent: string | FilteredAgent | undefined = this._agent;
+    if (shouldFilterAgent(config)) {
+      const publicKeys = readAllowedPublicKeys(this._allowedKeyPaths)
+        .map((content) => utils.parseKey(content) as ParsedKey | ParsedKey[] | Error)
+        .filter((parsed): parsed is ParsedKey | ParsedKey[] => !(parsed instanceof Error))
+        .flatMap((parsed) => Array.isArray(parsed) ? parsed : [parsed])
+        .map((parsed) => parsed.getPublicSSH());
+      effectiveAgent = new FilteredAgent(this._agent, publicKeys);
+    }
 
     const connectConfig: Record<string, unknown> = {
       host: config.host,
