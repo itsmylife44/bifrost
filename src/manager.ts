@@ -1,6 +1,7 @@
-import { Client, type SFTPWrapper } from "ssh2";
+import { Client, BaseAgent, createAgent, utils, type ParsedKey, type SFTPWrapper, type SignCallback, type SigningRequestOptions } from "ssh2";
 import type { BifrostServerConfig } from "./config";
 import { isWindows } from "./paths";
+import { existsSync, readFileSync } from "fs";
 
 export type ConnectionState = 
   | "disconnected"
@@ -41,12 +42,117 @@ export interface ExecOptions {
 const DEFAULT_TIMEOUT = 30_000;
 const DEFAULT_MAX_OUTPUT = 10 * 1024 * 1024;
 
+function getPublicKeyCandidates(keyPath: string): string[] {
+  if (keyPath.endsWith(".pub")) return [keyPath];
+  return [`${keyPath}.pub`];
+}
+
+function readAllowedPublicKeys(keyPaths: string[]): Buffer[] {
+  const buffers: Buffer[] = [];
+
+  for (const keyPath of keyPaths) {
+    for (const candidate of getPublicKeyCandidates(keyPath)) {
+      if (!existsSync(candidate)) continue;
+      try {
+        const content = readFileSync(candidate);
+        if (content.length > 0) {
+          buffers.push(content);
+          break;
+        }
+      } catch {
+        // Ignore unreadable candidates and continue.
+      }
+    }
+  }
+
+  return buffers;
+}
+
+function toParsedKey(key: unknown): ParsedKey | null {
+  if (!key || typeof key !== "object") return null;
+
+  if ("getPublicSSH" in key && typeof (key as ParsedKey).getPublicSSH === "function") {
+    return key as ParsedKey;
+  }
+
+  if ("pubKey" in key) {
+    const pubKey = (key as { pubKey?: unknown }).pubKey;
+    if (pubKey && typeof pubKey === "object" && "pubKey" in pubKey) {
+      return toParsedKey((pubKey as { pubKey?: unknown }).pubKey);
+    }
+    return toParsedKey(pubKey);
+  }
+
+  return null;
+}
+
+class FilteredAgent extends BaseAgent<string | Buffer | ParsedKey> {
+  private readonly inner: BaseAgent<string | Buffer | ParsedKey>;
+  private readonly allowedPublicKeys: Buffer[];
+
+  constructor(agentPath: string, allowedPublicKeys: Buffer[]) {
+    super();
+    this.inner = createAgent(agentPath);
+    this.allowedPublicKeys = allowedPublicKeys;
+  }
+
+  override getIdentities(cb: (err?: Error | null, keys?: ParsedKey[]) => void): void {
+    this.inner.getIdentities((err, keys) => {
+      if (err || !keys) {
+        cb(err ?? null, undefined);
+        return;
+      }
+
+      const filtered = keys.flatMap((key) => {
+        const parsed = toParsedKey(key);
+        if (!parsed) return [];
+
+        try {
+          const current = parsed.getPublicSSH();
+          return this.allowedPublicKeys.some((allowed) => current.equals(allowed)) ? [parsed] : [];
+        } catch {
+          return [];
+        }
+      });
+
+      cb(null, filtered);
+    });
+  }
+
+  override sign(pubKey: string | Buffer | ParsedKey, data: Buffer, cb?: SignCallback): void;
+  override sign(pubKey: string | Buffer | ParsedKey, data: Buffer, options?: SigningRequestOptions, cb?: SignCallback): void;
+  override sign(
+    pubKey: string | Buffer | ParsedKey,
+    data: Buffer,
+    optionsOrCb?: SigningRequestOptions | SignCallback,
+    cb?: SignCallback,
+  ): void {
+    if (typeof optionsOrCb === "function") {
+      this.inner.sign(pubKey, data, optionsOrCb);
+      return;
+    }
+
+    if (optionsOrCb) {
+      this.inner.sign(pubKey, data, optionsOrCb, cb);
+      return;
+    }
+
+    if (cb) {
+      this.inner.sign(pubKey, data, cb);
+      return;
+    }
+
+    this.inner.sign(pubKey, data, () => {});
+  }
+}
+
 export class BifrostManager implements AsyncDisposable {
   private _state: ConnectionState = "disconnected";
   private _config: BifrostServerConfig | null = null;
   private _client: Client | null = null;
   private _mutex: Promise<void> = Promise.resolve();
   private _agent: string | undefined;
+  private _allowedKeyPaths: string[] = [];
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.disconnect();
@@ -79,6 +185,10 @@ export class BifrostManager implements AsyncDisposable {
 
   setAgent(agent: string): void {
     this._agent = agent;
+  }
+
+  setAllowedKeyPaths(keyPaths: string[]): void {
+    this._allowedKeyPaths = [...keyPaths];
   }
 
   private translateSSHError(err: Error): BifrostError {
@@ -438,6 +548,14 @@ export class BifrostManager implements AsyncDisposable {
 
     const timeoutMs = (config.connectTimeout + 5) * 1000;
 
+    const publicKeys = readAllowedPublicKeys(this._allowedKeyPaths)
+      .map((content) => utils.parseKey(content))
+      .filter((parsed): parsed is any => !(parsed instanceof Error))
+      .map((parsed) => parsed.getPublicSSH());
+    const effectiveAgent = config.identitiesOnly !== false && publicKeys.length > 0
+      ? new FilteredAgent(this._agent, publicKeys)
+      : this._agent;
+
     const connectConfig: Record<string, unknown> = {
       host: config.host,
       port: config.port,
@@ -445,7 +563,12 @@ export class BifrostManager implements AsyncDisposable {
       readyTimeout: timeoutMs,
       keepaliveInterval: config.serverAliveInterval * 1000,
       keepaliveCountMax: 3,
-      agent: this._agent,
+      agent: effectiveAgent,
+      authHandler: [{
+        type: "agent",
+        username: config.user,
+        agent: effectiveAgent,
+      }],
     };
 
     return new Promise<void>((resolve, reject) => {

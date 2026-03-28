@@ -53,6 +53,12 @@ describe("BifrostServerSchema", () => {
       expect(result.keys).toEqual(["/path/to/key1", "/path/to/key2"]);
     });
 
+    it("parses config with identitiesOnly flag", () => {
+      const input = { host: "example.com", identitiesOnly: true };
+      const result = BifrostServerSchema.parse(input);
+      expect(result.identitiesOnly).toBe(true);
+    });
+
     it("allows optional keys", () => {
       const input = { host: "example.com" };
       const result = BifrostServerSchema.parse(input);

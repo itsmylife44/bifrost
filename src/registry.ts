@@ -202,6 +202,16 @@ function ensureKeysInAgent(config: BifrostServerConfig): KeyLoadNotice[] {
   return notices;
 }
 
+function getConfiguredKeyPaths(config: BifrostServerConfig): string[] {
+  const keyPaths: string[] = [];
+
+  if (config.keyPath) keyPaths.push(config.keyPath);
+  if (config.keys && config.keys.length > 0) keyPaths.push(...config.keys);
+  if (keyPaths.length === 0) keyPaths.push(...getSSHConfigKeysForHost(config.host));
+
+  return Array.from(new Set(keyPaths.map((keyPath) => expandTildePathPublic(keyPath))));
+}
+
 export class BifrostRegistry {
   private managers = new Map<string, BifrostManager>();
   private _activeServer: string | null = null;
@@ -234,6 +244,7 @@ export class BifrostRegistry {
     const agentSocket = getAgentSocket();
     const manager = new BifrostManager();
     manager.setConfig(config);
+    manager.setAllowedKeyPaths(getConfiguredKeyPaths(config));
 
     if (agentSocket) {
       manager.setAgent(agentSocket);

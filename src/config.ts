@@ -3,6 +3,7 @@ import { readFileSync, existsSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { isWindows } from "./paths";
+import { resolveSSHConfigForHost } from "./keys";
 
 const SAFE_HOST_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9.\-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
 const SAFE_USER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_\-]*$/;
@@ -25,6 +26,9 @@ export const BifrostServerSchema = z.object({
     ),
   keyPath: z
     .string()
+    .optional(),
+  identitiesOnly: z
+    .boolean()
     .optional(),
   keys: z
     .array(z.string())
@@ -162,7 +166,15 @@ function resolveServerEntry(
     };
   }
 
-  const resolved = { ...entry };
+  const sshConfig = resolveSSHConfigForHost(entry.host);
+  const resolved = {
+    ...entry,
+    host: sshConfig.hostName ?? entry.host,
+    user: entry.user ?? sshConfig.user ?? "root",
+    port: entry.port ?? sshConfig.port ?? 22,
+    identitiesOnly: entry.identitiesOnly ?? sshConfig.identitiesOnly,
+  };
+
   if (resolved.keyPath) {
     resolved.keyPath = expandTildePath(resolved.keyPath);
     validateKeyPath(resolved.keyPath);
