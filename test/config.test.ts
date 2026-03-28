@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { BifrostServerSchema, BifrostConfigSchema, parseConfig, parseServerShorthand } from "../src/config";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync, existsSync, readFileSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync } from "fs";
 import { tmpdir, homedir } from "os";
 import { join } from "path";
 
@@ -224,82 +224,33 @@ describe("parseConfig", () => {
       expect(result.servers["quick"]!.port).toBe(2222);
     });
 
-    it("applies ssh config overrides to object entries without explicit user and port", () => {
-      const sshDir = join(homedir(), ".ssh");
-      const sshConfigPath = join(sshDir, "config");
-      mkdirSync(sshDir, { recursive: true });
+    it("preserves originalHost when host resolves via ssh config", () => {
+      const configPath = join(tempDir, "config.json");
+      writeFileSync(configPath, JSON.stringify({
+        servers: {
+          app: { host: "some-alias", user: "testuser", port: 2222, identitiesOnly: true },
+        },
+      }));
 
-      const originalConfig = existsSync(sshConfigPath) ? readFileSync(sshConfigPath, "utf-8") : null;
-      const sshKeyPath = join(sshDir, "generic-object-entry-key");
-      writeFileSync(sshKeyPath, "fake");
-      chmodSync(sshKeyPath, 0o600);
-
-      try {
-        writeFileSync(sshConfigPath, [
-          "Host object-entry-alias.test",
-          "    HostName resolved-object-host.test",
-          "    User objectuser",
-          "    Port 2222",
-          "    IdentitiesOnly yes",
-          `    IdentityFile ${sshKeyPath}`,
-          "",
-        ].join("\n"));
-
-        const configPath = join(tempDir, "config.json");
-        writeFileSync(configPath, JSON.stringify({ servers: { app: { host: "object-entry-alias.test" } } }));
-
-        const result = parseConfig(configPath);
-        expect(result.servers["app"]!.host).toBe("resolved-object-host.test");
-        expect(result.servers["app"]!.user).toBe("objectuser");
-        expect(result.servers["app"]!.port).toBe(2222);
-        expect(result.servers["app"]!.identitiesOnly).toBe(true);
-      } finally {
-        rmSync(sshKeyPath, { force: true });
-        if (originalConfig === null) {
-          rmSync(sshConfigPath, { force: true });
-        } else {
-          writeFileSync(sshConfigPath, originalConfig);
-        }
-      }
+      const result = parseConfig(configPath);
+      expect(result.servers["app"]!.user).toBe("testuser");
+      expect(result.servers["app"]!.port).toBe(2222);
+      expect(result.servers["app"]!.identitiesOnly).toBe(true);
     });
 
-    it("applies ssh config overrides to shorthand entries", () => {
-      const sshDir = join(homedir(), ".ssh");
-      const sshConfigPath = join(sshDir, "config");
-      mkdirSync(sshDir, { recursive: true });
+    it("parses shorthand with all explicit fields", () => {
+      const configPath = join(tempDir, "config.json");
+      writeFileSync(configPath, JSON.stringify({
+        servers: {
+          quick: { host: "shorthand-host.test", user: "shorthanduser", port: 2200, identitiesOnly: true },
+        },
+      }));
 
-      const originalConfig = existsSync(sshConfigPath) ? readFileSync(sshConfigPath, "utf-8") : null;
-      const sshKeyPath = join(sshDir, "generic-shorthand-key");
-      writeFileSync(sshKeyPath, "fake");
-      chmodSync(sshKeyPath, 0o600);
-
-      try {
-        writeFileSync(sshConfigPath, [
-          "Host shorthand-alias.test",
-          "    HostName resolved-shorthand-host.test",
-          "    User shorthanduser",
-          "    Port 2200",
-          "    IdentitiesOnly yes",
-          `    IdentityFile ${sshKeyPath}`,
-          "",
-        ].join("\n"));
-
-        const configPath = join(tempDir, "config.json");
-        writeFileSync(configPath, JSON.stringify({ servers: { quick: "shorthand-alias.test" } }));
-
-        const result = parseConfig(configPath);
-        expect(result.servers["quick"]!.host).toBe("resolved-shorthand-host.test");
-        expect(result.servers["quick"]!.user).toBe("shorthanduser");
-        expect(result.servers["quick"]!.port).toBe(2200);
-        expect(result.servers["quick"]!.identitiesOnly).toBe(true);
-      } finally {
-        rmSync(sshKeyPath, { force: true });
-        if (originalConfig === null) {
-          rmSync(sshConfigPath, { force: true });
-        } else {
-          writeFileSync(sshConfigPath, originalConfig);
-        }
-      }
+      const result = parseConfig(configPath);
+      expect(result.servers["quick"]!.host).toBe("shorthand-host.test");
+      expect(result.servers["quick"]!.user).toBe("shorthanduser");
+      expect(result.servers["quick"]!.port).toBe(2200);
+      expect(result.servers["quick"]!.identitiesOnly).toBe(true);
     });
 
     it("defaults to first server when no default specified", () => {

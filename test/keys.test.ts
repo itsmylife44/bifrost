@@ -59,6 +59,19 @@ describe("SSH config parsing", () => {
     expect(resolved.identityFiles.some((file) => file.endsWith("secondary_test_key"))).toBe(true);
   });
 
+  it("applies top-level directives before any Host block as global defaults", () => {
+    writeFileSync(configPath, [
+      "IdentitiesOnly yes",
+      "",
+      "Host specific-host",
+      "    User specificuser",
+      "",
+    ].join("\n"));
+
+    const resolved = resolveSSHConfigForHostAtPath("any-random-host", configPath);
+    expect(resolved.identitiesOnly).toBe(true);
+  });
+
   it("honors negated host patterns as exclusions", () => {
     writeFileSync(configPath, [
       "Host * !blocked.example.com",

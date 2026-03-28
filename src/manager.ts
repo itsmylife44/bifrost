@@ -571,12 +571,15 @@ export class BifrostManager implements AsyncDisposable {
       keepaliveInterval: config.serverAliveInterval * 1000,
       keepaliveCountMax: 3,
       agent: effectiveAgent,
-      authHandler: [{
+    };
+
+    if (shouldFilterAgent(config)) {
+      connectConfig.authHandler = [{
         type: "agent",
         username: config.user,
         agent: effectiveAgent,
-      }],
-    };
+      }];
+    }
 
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {

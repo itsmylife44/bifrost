@@ -76,7 +76,7 @@ function parseSSHConfigBlocks(configPath = getDefaultSSHConfigPath()): SSHConfig
   }
 
   const blocks: SSHConfigBlock[] = [];
-  let currentPatterns: string[] = [];
+  let currentPatterns: string[] = ["*"];
   let currentConfig: SSHHostConfig = { identityFiles: [] };
 
   function flushBlock(): void {
@@ -114,7 +114,8 @@ function parseSSHConfigBlocks(configPath = getDefaultSSHConfigPath()): SSHConfig
       continue;
     }
 
-    if (currentPatterns.length === 0) continue;
+    // Note: currentPatterns is initialized to ["*"] so pre-Host directives
+    // are treated as global defaults, matching OpenSSH behaviour.
 
     if (keyLower === "hostname") {
       currentConfig.hostName = trimmedValue;
