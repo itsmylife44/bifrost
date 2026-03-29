@@ -53,6 +53,12 @@ describe("BifrostServerSchema", () => {
       expect(result.keys).toEqual(["/path/to/key1", "/path/to/key2"]);
     });
 
+    it("parses config with identitiesOnly flag", () => {
+      const input = { host: "example.com", identitiesOnly: true };
+      const result = BifrostServerSchema.parse(input);
+      expect(result.identitiesOnly).toBe(true);
+    });
+
     it("allows optional keys", () => {
       const input = { host: "example.com" };
       const result = BifrostServerSchema.parse(input);
@@ -216,6 +222,35 @@ describe("parseConfig", () => {
       expect(result.servers["quick"]!.host).toBe("10.0.0.5");
       expect(result.servers["quick"]!.user).toBe("deploy");
       expect(result.servers["quick"]!.port).toBe(2222);
+    });
+
+    it("preserves originalHost when host resolves via ssh config", () => {
+      const configPath = join(tempDir, "config.json");
+      writeFileSync(configPath, JSON.stringify({
+        servers: {
+          app: { host: "some-alias", user: "testuser", port: 2222, identitiesOnly: true },
+        },
+      }));
+
+      const result = parseConfig(configPath);
+      expect(result.servers["app"]!.user).toBe("testuser");
+      expect(result.servers["app"]!.port).toBe(2222);
+      expect(result.servers["app"]!.identitiesOnly).toBe(true);
+    });
+
+    it("parses shorthand with all explicit fields", () => {
+      const configPath = join(tempDir, "config.json");
+      writeFileSync(configPath, JSON.stringify({
+        servers: {
+          quick: { host: "shorthand-host.test", user: "shorthanduser", port: 2200, identitiesOnly: true },
+        },
+      }));
+
+      const result = parseConfig(configPath);
+      expect(result.servers["quick"]!.host).toBe("shorthand-host.test");
+      expect(result.servers["quick"]!.user).toBe("shorthanduser");
+      expect(result.servers["quick"]!.port).toBe(2200);
+      expect(result.servers["quick"]!.identitiesOnly).toBe(true);
     });
 
     it("defaults to first server when no default specified", () => {
